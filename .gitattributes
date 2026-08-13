@@ -1,0 +1,16 @@
+# Normalise line endings. Development happens on Windows, CI runs on Linux,
+# and Prettier is configured with endOfLine: lf — without this, checkouts get
+# CRLF and `prettier --check` fails on the runner.
+* text=auto eol=lf
+
+# Binary / generated — never touch.
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ico binary
+*.pdf binary
+*.woff binary
+*.woff2 binary
+
+package-lock.json -diff linguist-generated
