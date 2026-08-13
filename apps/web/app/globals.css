@@ -1,0 +1,42 @@
+/*
+ * Phase 0 baseline only.
+ *
+ * §5 specifies a cool slate/indigo base with a temperature gradient used
+ * DIAGNOSTICALLY (blue nominal → amber elevated → red breach), and explicitly
+ * rules out the stored amber.dark default. It also says to confirm direction
+ * before the dashboard build starts — that is Phase 5. Nothing here commits to
+ * a palette; these are neutral scaffolding tokens meant to be replaced.
+ */
+
+:root {
+  --surface: #0f1219;
+  --surface-raised: #171b26;
+  --border: #262c3a;
+  --text: #e6e9f0;
+  --text-muted: #939bb0;
+  --accent: #6b7cff;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  padding: 0;
+}
+
+body {
+  background: var(--surface);
+  color: var(--text);
+  font-family:
+    ui-sans-serif, system-ui, -apple-system, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
+  line-height: 1.55;
+  -webkit-font-smoothing: antialiased;
+}
+
+code {
+  font-family: ui-monospace, SFMono-Regular, 'SF Mono', Menlo, Consolas, monospace;
+  font-size: 0.9em;
+}
