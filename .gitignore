@@ -1,0 +1,29 @@
+node_modules/
+dist/
+build/
+.next/
+out/
+*.tsbuildinfo
+
+# Environment — never commit real credentials
+.env
+.env.*
+!.env.example
+
+# Phase 0 verification captures may contain raw API payloads
+artifacts/
+
+# Supabase local state
+supabase/.branches/
+supabase/.temp/
+
+# Editor / OS
+.DS_Store
+Thumbs.db
+.vscode/
+.idea/
+
+# Logs
+*.log
+npm-debug.log*
+.pm2/

@@ -1,0 +1,35 @@
+{
+  "name": "threshold",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Threshold — unified thermal-liability engine for temperature-controlled fleets",
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=20.9.0"
+  },
+  "scripts": {
+    "build": "npm run build --workspaces --if-present",
+    "build:packages": "npm run build --workspace @threshold/types --workspace @threshold/fortyguard-client",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "lint:fix": "eslint . --fix",
+    "format": "prettier --write .",
+    "format:check": "prettier --check .",
+    "verify:fortyguard": "npm run verify --workspace @threshold/fortyguard-client",
+    "db:start": "npx --yes supabase start",
+    "db:reset": "npx --yes supabase db reset",
+    "db:push": "npx --yes supabase db push",
+    "db:diff": "npx --yes supabase db diff"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.13.0",
+    "@types/node": "^22.7.5",
+    "eslint": "^9.13.0",
+    "prettier": "^3.3.3",
+    "typescript": "^5.6.3",
+    "typescript-eslint": "^8.11.0"
+  }
+}
