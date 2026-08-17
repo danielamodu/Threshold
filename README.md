@@ -21,7 +21,7 @@ Phase 0 builds the skeleton and verifies the upstream API. It deliberately does
 |---|---|
 | Monorepo scaffold | done |
 | §3 data contracts in `packages/types` | done |
-| Append-only audit log migration (§2) | done — **verified against live Postgres 16**, all 11 assertions pass |
+| Append-only audit log migration (§2) | done — applied and **verified against live Neon**, all assertions pass |
 | FortyGuard async submit/poll client (§8) | done |
 | CI — lint + typecheck on push | done |
 | Deploy skeletons — Vercel + EC2/PM2 | done |
@@ -40,8 +40,9 @@ packages/
   fortyguard-client/      FortyGuard Enterprise API client (§8).
 db/
   migrate.mts             Migration runner for Neon (§4). Checksum-guarded.
+  test.mts                Suite runner. Rolls back by default — see below.
   migrations/             Append-only audit log (§2). Files, never manual SQL.
-  tests/                  11-assertion suite proving the §2 guarantees.
+  tests/                  12 sections proving the §2 guarantees.
 .github/workflows/ci.yml  Lint + typecheck.
 ```
 
@@ -125,8 +126,17 @@ as the integrity claim; the claim is that nothing can be removed or altered.
 npm run db:migrate                    # apply pending to NEON_DATABASE_URL
 npm run db:migrate:dry                # list pending, change nothing
 npm run db:migrate -- --url postgres://...   # explicit target
-npm run db:test                       # the 11-assertion suite (needs psql)
+npm run db:test                       # assertion suite, rolled back
 ```
+
+**`db:test` rolls back by default, and that is not a convenience.** The suite
+inserts fixture rows, and this table cannot be deleted from — that is the whole
+design. Committing them would embed fake `1111-…` UUIDs in a real audit log
+permanently, where anyone reviewing it would see them. `--commit` exists but you
+almost never want it against a database you care about.
+
+The suite runs through `pg` rather than `psql`, so it needs no extra binary and
+works the same on Windows, Linux, and CI.
 
 The runner records a checksum per applied migration and refuses to run if an
 already-applied file has been edited — for an audit product, silent schema drift

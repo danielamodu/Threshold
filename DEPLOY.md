@@ -100,13 +100,19 @@ Get the connection string from the Neon console → Connection Details, and keep
 # Set NEON_DATABASE_URL in .env, then:
 npm run db:migrate:dry     # what would apply
 npm run db:migrate         # apply
-npm run db:test            # 11-assertion suite (needs psql on PATH)
+npm run db:test            # assertion suite, rolled back automatically
 ```
 
+`db:test` wraps everything in a transaction and rolls back, because `audit_log`
+cannot be deleted from — fixture rows committed to a real database are there for
+good. Don't reach for `--commit`.
+
 **Pooled vs direct.** Neon offers both; the host contains `-pooler` for the
-pooled one. Use pooled for the API server, and **direct for migrations** —
-pgbouncer in transaction mode doesn't hold session state across a migration's
-statements.
+pooled one. Pooled is the right default for the API server, and it applies these
+migrations fine — verified against live Neon — because each migration runs as a
+single transaction, which pgbouncer's transaction mode supports. Switch to the
+direct string if a migration ever needs session state to outlive a statement:
+advisory locks, `SET LOCAL`, or `CREATE DATABASE`.
 
 ### Verifying without a Neon project
 
