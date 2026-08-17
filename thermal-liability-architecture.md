@@ -21,12 +21,16 @@ from a single FortyGuard-fed event, in one pass.
 - **FortyGuard Temperature API client** — pulls per-waypoint temperature + forecast
   along a route, not a single point. Poll on a schedule for demo; webhook-subscribe
   model for the plug-and-play production story.
-  **Verified against their docs (see §9): the API is an async submit-then-poll job
+  **Verified against their docs (see §8): the API is an async submit-then-poll job
   (POST polygon/coordinate AOI + date_time → `activity_id`, then poll for result),
-  not an instant synchronous lookup.** Design the ingestion client to pre-fetch/batch
-  waypoints ahead of the truck's arrival at each point, not call-and-wait live —
-  build a small queue/poller around the client rather than treating it as a plain
-  REST GET.
+  not an instant synchronous lookup.** Confirmed further via Phase 0: one
+  `ThermalExposureEvent` actually requires **two chained jobs per waypoint** —
+  `POST /heatmap` (temperature only) → `POST /env_params(temp_c)` (humidity) — not
+  one. There is no coordinate/point endpoint; every waypoint needs a synthetic AOI
+  box built around it (`squareAoiAround()`, capped at 10 mi² Basic / 50 mi²
+  Premium). Design the ingestion client to pre-fetch/batch waypoints ahead of the
+  truck's arrival at each point, not call-and-wait live — this matters even more
+  now given two chained jobs' combined latency, not one.
 - **Telemetry feed** — GPS/ELD-style route + cargo-class + driver-assignment stream.
   Simulated for the demo (deterministic script you control), built behind an adapter
   interface so a real TMS (Samsara/Motive-shaped payload) could plug in without a
@@ -62,9 +66,12 @@ core insight — don't let an implementer accidentally fork the pipeline.
   or subscribes to it; you are not asking anyone to adopt a new siloed app.
 
 ### Audit Layer
-- Append-only Postgres log of every event, evaluation, and agent decision. Non-
-  negotiable for a liability product — "we can show exactly why this fired" is the
-  whole credibility argument to a judge from the Insurance/Governance track.
+- **Postgres — switched from Supabase to Neon** (see §4). Append-only Postgres log
+  of every event, evaluation, and agent decision — non-negotiable for a liability
+  product, since "we can show exactly why this fired" is the whole credibility
+  argument to a judge from the Insurance/Governance track. Neon gives that without
+  the extra product surface or the CLI friction Supabase's postinstall caused in
+  Phase 0.
 
 ### Judge-Facing Dashboard
 - Live route map, a **heat-spike injector** button (this is your demo's entire
@@ -88,14 +95,16 @@ core insight — don't let an implementer accidentally fork the pipeline.
   "driver_id": "string"
 }
 
-// ThermalExposureEvent — canonical event on the bus
+// ThermalExposureEvent — canonical event on the bus (RAW DATA ONLY —
+// heat_index_c is NOT computed here, see Decision Log in §8)
 {
   "event_id": "uuid",
   "route_id": "string",
   "waypoint_id": "string",
-  "temp_c": 0.0,
-  "heat_index_c": 0.0,
+  "temp_c": 0.0,               // Max of the AOI's Temperature_stats — see §8 decision log
+  "temp_stats": { "mean": 0.0, "max": 0.0, "min": 0.0, "stddev": 0.0 },  // audit-only, not used in decisions
   "humidity_pct": 0.0,
+  "data_quality": "complete | degraded_no_humidity",
   "timestamp": "ISO8601",
   "source": "fortyguard_api"
 }
@@ -105,7 +114,8 @@ core insight — don't let an implementer accidentally fork the pipeline.
   "record_id": "uuid",
   "driver_id": "string",
   "event_id": "uuid",
-  "heat_index_c": 0.0,
+  "heat_index_c": 0.0,         // COMPUTED HERE via NWS formula from event.temp_c + humidity_pct
+                                 // (or null if degraded_no_humidity — see fallback rule in §8)
   "action": "rest_break_scheduled | work_limit_reduced | none",
   "schedule": [ { "start": "ISO8601", "end": "ISO8601", "type": "rest | reduced_load" } ],
   "generated_at": "ISO8601",
@@ -146,7 +156,7 @@ core insight — don't let an implementer accidentally fork the pipeline.
 | Frontend | Next.js + Mapbox/Leaflet | Fast to ship, live map is the demo's visual anchor |
 | Backend | Node/TS, Fastify | Matches your usual stack, fast iteration with your orchestrator model |
 | Event bus | In-process emitter for demo scale; note upgrade path to Redis pub/sub in the README (shows you understand production scale without over-building it) |
-| DB | Postgres (Supabase) | Append-only audit table is the whole compliance story |
+| DB | Postgres (Neon) | Serverless Postgres, connection-string simple — no CLI/binary-download friction like Supabase's postinstall caused in Phase 0. Only using plain Postgres here (no auth/storage/realtime), so Neon's narrower surface is a better fit than Supabase's broader one. |
 | PDF export | pdf-lib | Compliance record + claim draft rendering |
 | Agent layer | Claude or Gemini API, function-calling into evaluator outputs | Sponsor-fit lever if GCP/NVIDIA judges are in the room |
 | Deploy | Vercel (frontend) + EC2/PM2 (backend, your usual pattern) | Consistent with Hedge/Relay/Nox-Safe deploys |
@@ -278,7 +288,35 @@ Confirmed from FortyGuard's own docs/site — the route-level design in this spe
   single-point route waypoints. Get API trial access and pull a live response before
   Day 1 ends — don't build the ingestion client against assumptions past this point.
 
-## 10. Claude Code Prompts (issue in order, one phase at a time)
+### Decision Log — Phase 0 findings resolved (post real-API report)
+
+Phase 0 came back with four real mismatches against the assumptions above. Resolved:
+
+1. **`temp_c` = Max** of the AOI's `Temperature_stats`, not Mean. This is a liability
+   product — Max is the conservative, defensible number if ever audited. Mean/Max/
+   Min/StdDev are all retained on the event as `temp_stats` for audit richness, but
+   only Max drives evaluator decisions.
+2. **`heat_index_c` is removed from `ThermalExposureEvent`.** It is not an ingestion
+   field — FortyGuard's own `heat_index_celsius` is not used. The Human Compliance
+   Evaluator computes it via the NWS formula from `temp_c` + `humidity_pct` at
+   evaluation time. This is more defensible under OSHA scrutiny than relying on a
+   third party's undocumented formula, and it resolves the §2/§3 conflict Phase 0
+   flagged.
+3. **Null `humidity_pct` → `data_quality: "degraded_no_humidity"`, never dropped,
+   never zero-filled.** When degraded, the Human Compliance Evaluator falls back to
+   a temp-only OSHA/NIOSH threshold rule instead of the NWS formula (which requires
+   humidity) — continuity of the audit trail matters more than a clean data point.
+   Zero-filling humidity would falsely deflate heat index and is explicitly
+   forbidden.
+4. **One `ThermalExposureEvent` requires two chained FortyGuard jobs**
+   (`/heatmap` → `/env_params`), not one — reflected in the Ingestion Layer note
+   above. This roughly doubles per-waypoint latency; the Phase 1 pre-fetch queue
+   needs to budget for both jobs in sequence, not one.
+
+`ThermalExposureEvent` and `ComplianceRecord` in §3 have been updated to reflect
+all four resolutions.
+
+## 9. Claude Code Prompts (issue in order, one phase at a time)
 
 General rule for all of these: paste the phase prompt into Claude Code **with this
 file attached/referenced** so it reads the full spec first. Don't let it start a
@@ -314,6 +352,30 @@ Stop and report back once Phase 0's exit condition is met: a real FortyGuard API
 call returns real temperature data through your client, end to end. If the real
 response shape doesn't match §3's data contracts, STOP and flag the mismatch —
 don't silently adapt the contract yourself.
+```
+
+---
+
+**Phase 0 — Follow-up (after credentials are in .env)**
+```
+FORTYGUARD_API_KEY is now in .env. The four mismatches you flagged have been
+resolved and §3/§8 in the spec are updated — re-read both sections before
+continuing, don't rely on your memory of the old versions.
+
+1. Run the real API call end to end: /heatmap → poll → /env_params → poll, against
+   a real coordinate.
+2. Confirm your fortyguard-client and contracts.ts now match the updated
+   ThermalExposureEvent shape (temp_c as Max, temp_stats retained, humidity_pct
+   nullable, data_quality field, heat_index_c REMOVED from this contract entirely).
+3. Attempt the Postgres migration again — Docker Desktop should be checked/started
+   first; if it still won't boot, tell me directly rather than shipping an
+   unverified migration silently.
+4. Do not build the NWS heat-index calculation here — that belongs to the Human
+   Compliance Evaluator in Phase 2, not the ingestion client.
+
+Report back once a real end-to-end call is proven and the migration is verified
+against live Postgres — or tell me clearly which of the two is still blocked and
+why.
 ```
 
 ---
@@ -433,7 +495,7 @@ content, that's being handled separately.
 Report back with the deploy URLs, backup video location, and README once done.
 ```
 
-## 11. Open Decisions (your call)
+## 10. Open Decisions (your call)
 
 - Whether the agent layer ships as auto-execute-capable or stays alert/draft-only for
   the demo (auto-execute is a stronger demo moment but a bigger liability claim to
