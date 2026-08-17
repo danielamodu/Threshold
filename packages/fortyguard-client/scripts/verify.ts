@@ -4,9 +4,17 @@
  *   "a real FortyGuard API call returns real temperature data through your
  *    client, end to end. No simulation involved yet — this has to be real."
  *
- * It runs the two job cycles a single ThermalExposureEvent needs, captures the
- * raw payloads, and reports which §3 fields the live API can actually source.
- * It does NOT rewrite any contract — a mismatch is reported, never patched.
+ * Runs the two chained job cycles one ThermalExposureEvent requires (§8
+ * decision 4), captures the raw payloads, and reports which §3 fields the live
+ * API can actually source. It does NOT rewrite any contract — a mismatch is
+ * reported, never patched.
+ *
+ * Checked against the post-decision-log §3:
+ *   temp_c        = Temperature_stats.Maximum   (§8 decision 1)
+ *   temp_stats    = mean / max / min / stddev   (audit-only)
+ *   humidity_pct  = relative_humidity_percent, NULLABLE (§8 decision 3)
+ *   data_quality  = complete | degraded_no_humidity
+ *   heat_index_c  is NOT an event field         (§8 decision 2)
  *
  *   npm run verify:fortyguard
  *   npm run verify:fortyguard -- --lat 33.4484 --lng -112.0740 --at 2026-08-13T18:00
@@ -62,34 +70,38 @@ if (Number.isNaN(target.getTime())) {
 const { start_date, start_time } = splitUtc(target);
 
 // ---------------------------------------------------------------------------
-// Reporting helpers
+// Reporting
 // ---------------------------------------------------------------------------
 
-const line = (): void => console.log('─'.repeat(72));
-const ok = (s: string): string => `  OK   ${s}`;
-const bad = (s: string): string => `  MISS ${s}`;
+const line = (): void => console.log('─'.repeat(74));
+
+type Verdict = 'ok' | 'degraded' | 'missing' | 'n/a';
 
 interface FieldFinding {
   field: string;
   contract: string;
   source: string;
-  present: boolean;
+  verdict: Verdict;
   value?: unknown;
   note?: string;
 }
 
 const findings: FieldFinding[] = [];
+const record = (f: FieldFinding): void => void findings.push(f);
 
-function record(f: FieldFinding): void {
-  findings.push(f);
-}
+const BADGE: Record<Verdict, string> = {
+  ok: '  OK  ',
+  degraded: ' DEGR ',
+  missing: ' MISS ',
+  'n/a': '  --  ',
+};
 
-/** First non-null entry of a time-aligned env_params array. */
+/** First real value of a time-aligned env_params array. */
 function firstValue(series: (number | null)[] | undefined): number | undefined {
   if (!series) return undefined;
   for (const v of series) {
     // null means "unavailable upstream"; -999 is the legacy sentinel for the
-    // same thing. Neither is a real measurement.
+    // same thing. Neither is a measurement, and neither may become 0.
     if (v !== null && v !== undefined && v !== -999) return v;
   }
   return undefined;
@@ -116,7 +128,7 @@ async function main(): Promise<number> {
   const client = FortyGuardClient.fromEnv();
   const aoi = squareAoiAround(lat, lng, sideKm);
 
-  // -- Job 1: temperature -----------------------------------------------------
+  // -- Job 1 of 2: temperature ------------------------------------------------
   console.log('\n[1/2] POST /heatmap  (analytic_type: tcm → °C)');
   const heatmapJob: JobResult<HeatmapResult> = await client.runHeatmap(
     {
@@ -127,55 +139,72 @@ async function main(): Promise<number> {
     },
     {
       onProgress: ({ attempt, state, elapsedMs }) => {
-        process.stdout.write(`\r      poll ${attempt} · ${state} · ${Math.round(elapsedMs / 1000)}s   `);
+        process.stdout.write(
+          `\r      poll ${attempt} · ${state} · ${Math.round(elapsedMs / 1000)}s   `,
+        );
       },
     },
   );
   process.stdout.write('\n');
 
-  const temps = summarizeTemperature(heatmapJob.result);
+  const t = summarizeTemperature(heatmapJob.result);
   console.log(`      activity_id : ${heatmapJob.activityId}`);
-  console.log(`      completed in: ${Math.round(heatmapJob.elapsedMs / 1000)}s over ${heatmapJob.pollCount} polls`);
-  console.log(`      tiles       : ${temps.tileCount}`);
-  console.log(`      temperature : min ${temps.min} · mean ${temps.mean} · max ${temps.max} ${temps.units}`);
+  console.log(
+    `      completed in: ${Math.round(heatmapJob.elapsedMs / 1000)}s over ${heatmapJob.pollCount} polls`,
+  );
+  console.log(`      tiles       : ${t.tileCount}`);
+  console.log(`      stats       : min ${t.min} · mean ${t.mean} · max ${t.max} ${t.units}`);
 
-  const haveTemp = typeof temps.mean === 'number' || typeof temps.max === 'number';
+  // §8 decision 1: temp_c is Max, not Mean.
   record({
     field: 'temp_c',
     contract: 'ThermalExposureEvent',
-    source: 'heatmap → stats_data.Temperature_stats',
-    present: haveTemp,
-    value: temps.mean ?? temps.max,
+    source: 'heatmap → stats_data.Temperature_stats.Maximum',
+    verdict: typeof t.max === 'number' ? 'ok' : 'missing',
+    value: t.max,
+    note: typeof t.max === 'number' ? 'Max, per §8 decision 1' : undefined,
   });
+
+  const statPairs: [keyof typeof t, string][] = [
+    ['mean', 'Mean'],
+    ['max', 'Maximum'],
+    ['min', 'Minimum'],
+    ['stdDev', 'Standard_deviation'],
+  ];
+  for (const [local, wire] of statPairs) {
+    const key = local === 'stdDev' ? 'stddev' : local;
+    record({
+      field: `temp_stats.${key}`,
+      contract: 'ThermalExposureEvent',
+      source: `heatmap → stats_data.Temperature_stats.${wire}`,
+      verdict: typeof t[local] === 'number' ? 'ok' : 'missing',
+      value: t[local],
+    });
+  }
+
   record({
     field: 'forecasted_temp_c',
     contract: 'WaypointTelemetry',
-    source: 'heatmap → stats_data.Temperature_stats (forecast window ≤ 12h)',
-    present: haveTemp,
-    value: temps.mean ?? temps.max,
+    source: 'heatmap → Temperature_stats (forecast window ≤ 12h)',
+    verdict: typeof t.max === 'number' ? 'ok' : 'missing',
+    value: t.max,
   });
 
-  // -- Job 2: heat index + humidity ------------------------------------------
+  // -- Job 2 of 2: humidity ---------------------------------------------------
   let envJob: JobResult<EnvParamsResult> | undefined;
+  let humidity: number | undefined;
 
   if (skipEnvParams) {
     console.log('\n[2/2] POST /env_params  — SKIPPED (--skip-env-params)');
     record({
-      field: 'heat_index_c',
-      contract: 'ThermalExposureEvent',
-      source: 'env_params → parameters.heat_index_celsius',
-      present: false,
-      note: 'not attempted',
-    });
-    record({
       field: 'humidity_pct',
-      contract: 'ThermalExposureEvent / WaypointTelemetry',
+      contract: 'ThermalExposureEvent',
       source: 'env_params → parameters.relative_humidity_percent',
-      present: false,
+      verdict: 'missing',
       note: 'not attempted',
     });
   } else {
-    const seedTemp = temps.mean ?? temps.max;
+    const seedTemp = t.max ?? t.mean;
     if (typeof seedTemp !== 'number') {
       throw new Error('Cannot call /env_params: the heatmap returned no usable temperature.');
     }
@@ -187,69 +216,86 @@ async function main(): Promise<number> {
         longitude: lng,
         temperature: seedTemp,
         date_time: { start_date, start_time, filter_type: 1 },
-        // Exactly 3 — API Basic's per-request ceiling.
-        analysis: [
-          'heat_index_celsius',
-          'relative_humidity_percent',
-          'wet_bulb_temperature_celsius',
-        ],
+        // Humidity only. FortyGuard's heat_index_celsius is deliberately NOT
+        // requested — §8 decision 2 removes it from the pipeline entirely in
+        // favour of the NWS formula computed in Phase 2.
+        analysis: ['relative_humidity_percent'],
       },
       {
         onProgress: ({ attempt, state, elapsedMs }) => {
-          process.stdout.write(`\r      poll ${attempt} · ${state} · ${Math.round(elapsedMs / 1000)}s   `);
+          process.stdout.write(
+            `\r      poll ${attempt} · ${state} · ${Math.round(elapsedMs / 1000)}s   `,
+          );
         },
       },
     );
     process.stdout.write('\n');
 
     const loc = envJob.result?.locations?.[0];
-    const heatIndex = firstValue(loc?.parameters?.heat_index_celsius);
-    const humidity = firstValue(loc?.parameters?.relative_humidity_percent);
+    humidity = firstValue(loc?.parameters?.relative_humidity_percent);
 
     console.log(`      activity_id : ${envJob.activityId}`);
-    console.log(`      completed in: ${Math.round(envJob.elapsedMs / 1000)}s over ${envJob.pollCount} polls`);
-    console.log(`      heat index  : ${heatIndex} °C`);
-    console.log(`      humidity    : ${humidity} %`);
+    console.log(
+      `      completed in: ${Math.round(envJob.elapsedMs / 1000)}s over ${envJob.pollCount} polls`,
+    );
+    console.log(`      humidity    : ${humidity ?? 'null (unavailable upstream)'} %`);
 
-    record({
-      field: 'heat_index_c',
-      contract: 'ThermalExposureEvent',
-      source: 'env_params → parameters.heat_index_celsius',
-      present: typeof heatIndex === 'number',
-      value: heatIndex,
-    });
+    // Nullable by contract — absence is a valid, recorded state, not a failure.
     record({
       field: 'humidity_pct',
-      contract: 'ThermalExposureEvent / WaypointTelemetry',
+      contract: 'ThermalExposureEvent',
       source: 'env_params → parameters.relative_humidity_percent',
-      present: typeof humidity === 'number',
-      value: humidity,
+      verdict: typeof humidity === 'number' ? 'ok' : 'degraded',
+      value: humidity ?? null,
+      note:
+        typeof humidity === 'number'
+          ? undefined
+          : 'null — contract allows this; never zero-filled (§8 decision 3)',
     });
   }
+
+  const dataQuality = typeof humidity === 'number' ? 'complete' : 'degraded_no_humidity';
+  record({
+    field: 'data_quality',
+    contract: 'ThermalExposureEvent',
+    source: 'derived from humidity_pct nullness',
+    verdict: 'ok',
+    value: dataQuality,
+  });
 
   // -- Fields the API is not expected to supply ------------------------------
   for (const f of [
-    { field: 'event_id', contract: 'ThermalExposureEvent', source: 'generated locally (uuid)' },
-    { field: 'route_id', contract: 'ThermalExposureEvent', source: 'telemetry adapter (Phase 1)' },
-    { field: 'waypoint_id', contract: 'ThermalExposureEvent', source: 'telemetry adapter (Phase 1)' },
-    { field: 'timestamp', contract: 'ThermalExposureEvent', source: 'echoed from the request' },
-    { field: 'source', contract: 'ThermalExposureEvent', source: "literal 'fortyguard_api'" },
+    { field: 'event_id', source: 'generated locally (uuid)' },
+    { field: 'route_id', source: 'telemetry adapter (Phase 1)' },
+    { field: 'waypoint_id', source: 'telemetry adapter (Phase 1)' },
+    { field: 'timestamp', source: 'echoed from the request' },
+    { field: 'source', source: "literal 'fortyguard_api'" },
   ]) {
-    record({ ...f, present: true, note: 'not API-sourced by design' });
+    record({ ...f, contract: 'ThermalExposureEvent', verdict: 'n/a', note: 'not API-sourced' });
   }
+
+  // §8 decision 2 — assert the removed field stays removed.
+  record({
+    field: 'heat_index_c',
+    contract: 'ThermalExposureEvent',
+    source: 'REMOVED — computed by the Compliance Evaluator (Phase 2)',
+    verdict: 'n/a',
+    note: 'correctly absent from this contract',
+  });
 
   // -- Report ----------------------------------------------------------------
   line();
   console.log('§3 contract coverage against the live API');
   line();
   for (const f of findings) {
-    const label = `${f.contract}.${f.field}`.padEnd(46);
+    const label = `${f.contract}.${f.field}`.padEnd(44);
     const detail = f.note ?? (f.value === undefined ? '' : String(f.value));
-    console.log(`${f.present ? ok(label) : bad(label)} ${detail}`);
+    console.log(`${BADGE[f.verdict]} ${label} ${detail}`);
     console.log(`       ← ${f.source}`);
   }
 
-  const missing = findings.filter((f) => !f.present);
+  const missing = findings.filter((f) => f.verdict === 'missing');
+  const degraded = findings.filter((f) => f.verdict === 'degraded');
   line();
 
   // -- Capture ---------------------------------------------------------------
@@ -261,6 +307,7 @@ async function main(): Promise<number> {
   const capture = {
     captured_at: new Date().toISOString(),
     request: { lat, lng, sideKm, start_date, start_time, granularity: 100, analytic_type: 'tcm' },
+    derived: { temp_c: t.max, data_quality: dataQuality, humidity_pct: humidity ?? null },
     heatmap: {
       activity_id: heatmapJob.activityId,
       elapsed_ms: heatmapJob.elapsedMs,
@@ -288,15 +335,20 @@ async function main(): Promise<number> {
   line();
 
   if (missing.length > 0) {
-    console.log(`RESULT: ${missing.length} §3 field(s) NOT satisfied by the live API:`);
+    console.log(`RESULT: ${missing.length} required §3 field(s) NOT satisfied by the live API:`);
     for (const f of missing) console.log(`  · ${f.contract}.${f.field}  (${f.source})`);
-    console.log('\nPhase 0 exit condition NOT met for the full event shape.');
+    console.log('\nPhase 0 exit condition NOT met.');
     console.log('Do not adapt §3 to fit this — report the mismatch and reconcile the spec first.');
     return 1;
   }
 
-  console.log('RESULT: real temperature data returned end to end, and every §3 field');
-  console.log('        has a confirmed source. Phase 0 exit condition MET.');
+  console.log('RESULT: real temperature data returned end to end. Every required §3');
+  console.log(`        field has a confirmed source. data_quality = ${dataQuality}.`);
+  if (degraded.length > 0) {
+    console.log('        Humidity was unavailable upstream — a valid degraded state,');
+    console.log('        recorded as such rather than zero-filled.');
+  }
+  console.log('        Phase 0 exit condition MET.');
   return 0;
 }
 
