@@ -38,7 +38,11 @@ export async function buildServer(): Promise<FastifyInstance> {
   app.get('/ready', async (_request, reply) => {
     const checks = {
       fortyguard_api_key: Boolean(process.env.FORTYGUARD_API_KEY?.trim()),
-      database_url: Boolean(process.env.DATABASE_URL?.trim()),
+      // Neon (§4). DATABASE_URL is accepted as a local-verification fallback,
+      // matching the resolution order in db/migrate.ts.
+      neon_database_url: Boolean(
+        (process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || '').trim(),
+      ),
     };
     const ready = Object.values(checks).every(Boolean);
     return reply.code(ready ? 200 : 503).send({ ready, checks });

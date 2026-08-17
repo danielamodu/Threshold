@@ -19,6 +19,13 @@ create extension if not exists pgcrypto;
 create table public.audit_log (
   -- Monotonic insertion order. This is the ordering guarantee, not `recorded_at`,
   -- which can tie under concurrent writes.
+  --
+  -- IMPORTANT for auditors: monotonic, but NOT gap-free. Postgres identity
+  -- sequences do not roll back, so a rejected insert (an agent_decision with no
+  -- rationale, say) burns a value and leaves a hole. A gap is therefore evidence
+  -- of a REFUSED write, never of a deleted row — deletion is impossible here,
+  -- see the trigger below. Do not present gap-freeness as an integrity claim;
+  -- the integrity claim is that nothing can be removed or altered.
   seq         bigint generated always as identity primary key,
   entry_id    uuid not null default gen_random_uuid(),
 
@@ -66,7 +73,7 @@ create table public.audit_log (
 comment on table public.audit_log is
   'Append-only liability audit log (§2). Every event, evaluation, and agent decision. UPDATE/DELETE/TRUNCATE are blocked by trigger.';
 comment on column public.audit_log.seq is
-  'Monotonic insertion order — the "logged, in order" guarantee.';
+  'Monotonic insertion order — the "logged, in order" guarantee. Monotonic but not gap-free: a gap marks a rejected write, not a deleted row.';
 comment on column public.audit_log.event_id is
   'Correlation key joining a ThermalExposureEvent to every downstream evaluation and decision.';
 comment on column public.audit_log.payload is
@@ -114,23 +121,16 @@ create trigger audit_log_no_truncate
 
 -- ---------------------------------------------------------------------------
 -- Privileges — belt and braces alongside the triggers above.
+--
+-- Target is vanilla Postgres (Neon). Deliberately no `anon` / `authenticated` /
+-- `service_role` grants and no RLS policies: those three roles are Supabase
+-- inventions that ship with its PostgREST layer, and they do not exist on Neon
+-- — granting to them would abort this migration with "role does not exist".
+-- RLS is likewise pointless without PostgREST, since the app connects as a
+-- single owning role over a connection string.
+--
+-- The trigger above is the actual append-only guarantee. It fires regardless of
+-- role, including for the table owner. These revokes are the second layer.
 -- ---------------------------------------------------------------------------
 
 revoke update, delete, truncate on public.audit_log from public;
-revoke update, delete, truncate on public.audit_log from anon, authenticated, service_role;
-
-grant select, insert on public.audit_log to authenticated, service_role;
--- `anon` may read for the judge-facing dashboard (§2) but never write.
-grant select on public.audit_log to anon;
-
-alter table public.audit_log enable row level security;
-
--- Only SELECT and INSERT policies exist. With RLS on, the absence of UPDATE and
--- DELETE policies denies those operations independently of the triggers.
-create policy audit_log_select on public.audit_log
-  for select to anon, authenticated, service_role
-  using (true);
-
-create policy audit_log_insert on public.audit_log
-  for insert to authenticated, service_role
-  with check (true);

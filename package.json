@@ -13,22 +13,26 @@
   "scripts": {
     "build": "npm run build --workspaces --if-present",
     "build:packages": "npm run build --workspace @threshold/types --workspace @threshold/fortyguard-client",
-    "typecheck": "npm run typecheck --workspaces --if-present",
+    "typecheck": "npm run typecheck --workspaces --if-present && npm run typecheck:db",
+    "typecheck:db": "tsc -p db/tsconfig.json",
     "lint": "eslint .",
     "lint:fix": "eslint . --fix",
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "verify:fortyguard": "npm run verify --workspace @threshold/fortyguard-client",
-    "db:start": "npx --yes supabase start",
-    "db:reset": "npx --yes supabase db reset",
-    "db:push": "npx --yes supabase db push",
-    "db:diff": "npx --yes supabase db diff"
+    "db:migrate": "tsx db/migrate.mts",
+    "db:migrate:dry": "tsx db/migrate.mts --dry-run",
+    "db:test": "psql \"$NEON_DATABASE_URL\" -f db/tests/audit_log_test.sql"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
     "@types/node": "^22.7.5",
+    "@types/pg": "^8.11.10",
+    "dotenv": "^16.4.5",
     "eslint": "^9.13.0",
+    "pg": "^8.13.1",
     "prettier": "^3.3.3",
+    "tsx": "^4.19.1",
     "typescript": "^5.6.3",
     "typescript-eslint": "^8.11.0"
   }

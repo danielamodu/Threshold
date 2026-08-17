@@ -4,29 +4,19 @@
 -- one event to both liability responses, decisions cannot be stored without a
 -- rationale, and UPDATE / DELETE / TRUNCATE all raise.
 --
--- Run against local Supabase:
---     npm run db:reset
---     psql "$DATABASE_URL" -f supabase/tests/audit_log_test.sql
+-- Target is vanilla Postgres (Neon in production, any local Postgres for
+-- verification). No Supabase roles are created or referenced — see the
+-- privileges note in the migration for why.
 --
--- Or against a throwaway Postgres (see the header of each section — this script
--- creates the Supabase roles itself so a bare postgres:15 image works):
---     docker run -d --name threshold-pg -e POSTGRES_PASSWORD=postgres \
---       -e POSTGRES_DB=threshold -p 55432:5432 postgres:15
---     psql postgresql://postgres:postgres@localhost:55432/threshold \
---       -f supabase/migrations/20260813090000_create_audit_log.sql \
---       -f supabase/tests/audit_log_test.sql
+--     npm run db:migrate            # apply migrations
+--     npm run db:test               # this file
+--
+-- Or directly:
+--     psql "$NEON_DATABASE_URL" -f db/tests/audit_log_test.sql
 --
 -- Every assertion below fails loudly. A clean run ends at section 11.
 
 \set ON_ERROR_STOP on
-
--- Supabase provides these; a bare Postgres image does not.
-do $$
-begin
-  if not exists (select 1 from pg_roles where rolname = 'anon') then create role anon nologin; end if;
-  if not exists (select 1 from pg_roles where rolname = 'authenticated') then create role authenticated nologin; end if;
-  if not exists (select 1 from pg_roles where rolname = 'service_role') then create role service_role nologin; end if;
-end $$;
 
 \echo '== 1. append a ThermalExposureEvent =='
 insert into public.audit_log (entry_type, event_id, route_id, payload, occurred_at)
@@ -34,9 +24,34 @@ values (
   'thermal_exposure_event',
   '11111111-1111-1111-1111-111111111111',
   'route-a',
-  '{"event_id":"11111111-1111-1111-1111-111111111111","route_id":"route-a","temp_c":41.2,"heat_index_c":47.9,"humidity_pct":38,"source":"fortyguard_api"}'::jsonb,
+  -- Post-decision-log §3 shape: temp_c is the AOI Max, temp_stats rides along
+  -- for audit, and heat_index_c is deliberately ABSENT (§8 decision 2).
+  '{"event_id":"11111111-1111-1111-1111-111111111111","route_id":"route-a","waypoint_id":"wp-1","temp_c":41.2,"temp_stats":{"mean":37.4,"max":41.2,"min":34.1,"stddev":1.8},"humidity_pct":38,"data_quality":"complete","timestamp":"2026-08-17T14:00:00Z","source":"fortyguard_api"}'::jsonb,
   now()
 );
+
+\echo '== 1b. a degraded event (null humidity) is stored, never zero-filled =='
+insert into public.audit_log (entry_type, event_id, route_id, payload, occurred_at)
+values (
+  'thermal_exposure_event',
+  '22222222-2222-2222-2222-222222222222',
+  'route-a',
+  '{"event_id":"22222222-2222-2222-2222-222222222222","route_id":"route-a","waypoint_id":"wp-2","temp_c":39.6,"temp_stats":{"mean":36.0,"max":39.6,"min":33.2,"stddev":1.5},"humidity_pct":null,"data_quality":"degraded_no_humidity","timestamp":"2026-08-17T15:00:00Z","source":"fortyguard_api"}'::jsonb,
+  now()
+);
+
+do $$
+declare h jsonb;
+begin
+  select payload -> 'humidity_pct' into h
+  from public.audit_log
+  where event_id = '22222222-2222-2222-2222-222222222222';
+
+  if h is null or jsonb_typeof(h) <> 'null' then
+    raise exception 'ASSERT FAILED: degraded humidity_pct should be JSON null, got %', h;
+  end if;
+  raise notice 'PASS: null humidity stored as JSON null, not 0 (§8 decision 3)';
+end $$;
 
 \echo '== 2. append both evaluations for the SAME event_id =='
 insert into public.audit_log (entry_type, event_id, payload, occurred_at)
@@ -114,6 +129,8 @@ exception
 end $$;
 
 \echo '== 10. final contents, in insertion order =='
+\echo '   (seq skips a value: the rejected insert in section 3 burned one.'
+\echo '    Monotonic, not gap-free — a gap means a REFUSED write, not a deletion.)'
 select seq, entry_type, event_id, route_id, (rationale is not null) as has_rationale
 from public.audit_log
 order by seq;
