@@ -86,18 +86,37 @@ curl localhost:8080/ready    # config presence — booleans only, never values
 
 ---
 
-## Database → Supabase
+## Database → Neon
 
-Migrations are files under `supabase/migrations`, applied with the CLI. Never
-apply schema changes by hand in the Supabase SQL editor — the migration file is
-the record.
+Migrations are files under `db/migrations`, applied by `db/migrate.mts`. Never
+apply schema changes by hand in the Neon SQL editor — the migration file is the
+record, and the runner's checksum ledger will flag any file edited after it was
+applied.
+
+Get the connection string from the Neon console → Connection Details, and keep
+`?sslmode=require`.
 
 ```bash
-# Local
-npx supabase start
-npx supabase db reset      # replays every migration from scratch
-
-# Hosted
-npx supabase link --project-ref <ref>
-npx supabase db push
+# Set NEON_DATABASE_URL in .env, then:
+npm run db:migrate:dry     # what would apply
+npm run db:migrate         # apply
+npm run db:test            # 11-assertion suite (needs psql on PATH)
 ```
+
+**Pooled vs direct.** Neon offers both; the host contains `-pooler` for the
+pooled one. Use pooled for the API server, and **direct for migrations** —
+pgbouncer in transaction mode doesn't hold session state across a migration's
+statements.
+
+### Verifying without a Neon project
+
+Neon is plain Postgres, so any local Postgres is a faithful target for the
+migration and its test suite:
+
+```bash
+npm run db:migrate -- --url "postgresql://postgres:postgres@localhost:5432/threshold_verify"
+```
+
+What local *won't* exercise: TLS, the pooled connection string, and Neon
+branching. Re-run the suite against a real Neon branch once before the Phase 4
+deploy.

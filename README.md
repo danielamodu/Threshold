@@ -21,7 +21,7 @@ Phase 0 builds the skeleton and verifies the upstream API. It deliberately does
 |---|---|
 | Monorepo scaffold | done |
 | §3 data contracts in `packages/types` | done |
-| Append-only audit log migration (§2) | written; **not yet applied** — needs a Supabase project |
+| Append-only audit log migration (§2) | done — **verified against live Postgres 16**, all 11 assertions pass |
 | FortyGuard async submit/poll client (§8) | done |
 | CI — lint + typecheck on push | done |
 | Deploy skeletons — Vercel + EC2/PM2 | done |
@@ -38,8 +38,10 @@ apps/
 packages/
   types/                  §3 data contracts. A mirror, not a design surface.
   fortyguard-client/      FortyGuard Enterprise API client (§8).
-supabase/
+db/
+  migrate.mts             Migration runner for Neon (§4). Checksum-guarded.
   migrations/             Append-only audit log (§2). Files, never manual SQL.
+  tests/                  11-assertion suite proving the §2 guarantees.
 .github/workflows/ci.yml  Lint + typecheck.
 ```
 
@@ -114,13 +116,24 @@ check constraint, because a decision with no rationale is not auditable.
 `event_id` is the correlation key across every entry type, which is what makes
 "one heat event → two liability responses" a single query.
 
+`seq` is monotonic but **not gap-free** — Postgres identity sequences don't roll
+back, so a rejected write burns a value. A gap is evidence of a *refused* insert,
+never of a deleted row. Deletion is impossible here. Don't present gap-freeness
+as the integrity claim; the claim is that nothing can be removed or altered.
+
 ```bash
-npm run db:start   # local Supabase
-npm run db:reset   # replay every migration from scratch
-npm run db:push    # apply to a linked hosted project
+npm run db:migrate                    # apply pending to NEON_DATABASE_URL
+npm run db:migrate:dry                # list pending, change nothing
+npm run db:migrate -- --url postgres://...   # explicit target
+npm run db:test                       # the 11-assertion suite (needs psql)
 ```
 
-Schema changes are migration files. Never the Supabase SQL editor.
+The runner records a checksum per applied migration and refuses to run if an
+already-applied file has been edited — for an audit product, silent schema drift
+between environments is the failure you can least afford. Add a new migration
+instead.
+
+Schema changes are migration files. Never the Neon SQL editor.
 
 ## Deployment
 
