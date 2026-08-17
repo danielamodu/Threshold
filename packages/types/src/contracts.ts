@@ -29,14 +29,46 @@ export interface WaypointTelemetry {
   driver_id: string;
 }
 
-/** ThermalExposureEvent — canonical event on the bus */
+/**
+ * §3 — ThermalExposureEvent.temp_stats. Audit richness only; §3 states these do
+ * not drive decisions. Note the lowercase keys differ from FortyGuard's wire
+ * names (`Minimum`/`Maximum`/`Mean`/`Standard_deviation`) — mapping between the
+ * two is ingestion's job in Phase 1.
+ */
+export interface TempStats {
+  mean: number;
+  max: number;
+  min: number;
+  stddev: number;
+}
+
+/**
+ * §3 — ThermalExposureEvent.data_quality.
+ *
+ * `degraded_no_humidity` marks an event whose `humidity_pct` came back null.
+ * Per §8 decision 3 such events are never dropped and never zero-filled; the
+ * Human Compliance Evaluator falls back to a temp-only OSHA/NIOSH rule.
+ */
+export type DataQuality = 'complete' | 'degraded_no_humidity';
+
+/**
+ * ThermalExposureEvent — canonical event on the bus.
+ *
+ * RAW DATA ONLY. `heat_index_c` is deliberately absent (§8 decision 2):
+ * FortyGuard's `heat_index_celsius` is not used, and the NWS computation
+ * belongs to the Human Compliance Evaluator at evaluation time, not here.
+ */
 export interface ThermalExposureEvent {
   event_id: UUID;
   route_id: string;
   waypoint_id: string;
+  /** Max of the AOI's Temperature_stats — the conservative, auditable number (§8 decision 1). */
   temp_c: number;
-  heat_index_c: number;
-  humidity_pct: number;
+  /** Audit-only, not used in decisions (§3). */
+  temp_stats: TempStats;
+  /** Null when unavailable upstream. Never zero-filled (§8 decision 3). */
+  humidity_pct: number | null;
+  data_quality: DataQuality;
   timestamp: ISO8601;
   source: 'fortyguard_api';
 }
@@ -59,7 +91,13 @@ export interface ComplianceRecord {
   record_id: UUID;
   driver_id: string;
   event_id: UUID;
-  heat_index_c: number;
+  /**
+   * Computed HERE via the NWS formula from `event.temp_c` + `humidity_pct`
+   * (§3, §8 decision 2) — by the Human Compliance Evaluator in Phase 2, not by
+   * ingestion. Null when the source event is `degraded_no_humidity`, since the
+   * NWS formula requires humidity.
+   */
+  heat_index_c: number | null;
   action: ComplianceAction;
   schedule: ComplianceScheduleEntry[];
   generated_at: ISO8601;
