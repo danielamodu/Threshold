@@ -9,12 +9,19 @@
 -- privileges note in the migration for why.
 --
 --     npm run db:migrate            # apply migrations
---     npm run db:test               # this file
+--     npm run db:test               # this file, wrapped in a rollback
 --
--- Or directly:
+-- Also runnable directly by psql, which is why the \echo/\set meta-commands are
+-- kept; db/test.mts strips them when driving the file over the wire protocol:
 --     psql "$NEON_DATABASE_URL" -f db/tests/audit_log_test.sql
 --
--- Every assertion below fails loudly. A clean run ends at section 11.
+-- NOTE: run via `npm run db:test` against anything real. These inserts CANNOT be
+-- deleted afterwards — that is the property being tested — so the runner rolls
+-- them back. Running this file straight through psql commits them for good.
+--
+-- Every assertion below fails loudly. A clean run ends at section 11
+-- (12 sections counting 1b; 7 emit an explicit PASS notice, the rest assert by
+-- succeeding or by returning rows for inspection).
 
 \set ON_ERROR_STOP on
 

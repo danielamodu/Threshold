@@ -22,7 +22,7 @@
     "verify:fortyguard": "npm run verify --workspace @threshold/fortyguard-client",
     "db:migrate": "tsx db/migrate.mts",
     "db:migrate:dry": "tsx db/migrate.mts --dry-run",
-    "db:test": "psql \"$NEON_DATABASE_URL\" -f db/tests/audit_log_test.sql"
+    "db:test": "tsx db/test.mts"
   },
   "devDependencies": {
     "@eslint/js": "^9.13.0",
