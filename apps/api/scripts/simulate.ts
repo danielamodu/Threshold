@@ -7,11 +7,19 @@
  * could not be deleted afterwards. Pass --persist <url> to override, only ever
  * at a scratch database.
  *
+ * Also runs the Phase 3 hard-coded-threshold fallback (§9) on every event's
+ * combined evaluator output. It is not the LLM orchestrator — that reads
+ * both evaluator outputs via Claude or Gemini and is a separate, still-open
+ * decision per §10 — this is the deterministic safety net that runs whether
+ * or not that later layer ever lands.
+ *
  *   npm run simulate --workspace @threshold/api
  *   npm run simulate --workspace @threshold/api -- --spike wp-3=20
+ *   npm run simulate --workspace @threshold/api -- --spike wp-3=20 --auto-execute
  */
 
 import { InMemoryAuditSink, PostgresAuditSink, type AuditSink } from '@threshold/audit';
+import { HardCodedThresholdDecider } from '@threshold/decision-layer';
 import {
   SimulatedTelemetryAdapter,
   SyntheticThermalReadingSource,
@@ -58,6 +66,7 @@ async function main(): Promise<number> {
   const persistUrl = arg('persist');
   const spikes = parseSpikes();
   const degraded = (arg('no-humidity') ?? '').split(',').filter(Boolean);
+  const allowAutoExecute = process.argv.includes('--auto-execute');
 
   let sink: AuditSink;
   if (persistUrl) {
@@ -73,7 +82,12 @@ async function main(): Promise<number> {
     cargo_class: ROUTE.cargo_class,
   });
 
-  const pipeline = new RiskPipeline({ sink, routes, initialExposureHours: 1 });
+  const pipeline = new RiskPipeline({
+    sink,
+    routes,
+    initialExposureHours: 1,
+    decider: new HardCodedThresholdDecider({ allowAutoExecute }),
+  });
   const telemetry = new SimulatedTelemetryAdapter({ route: ROUTE, seed: 1234 });
   const readings = new SyntheticThermalReadingSource({
     seed: 99,
@@ -90,16 +104,18 @@ async function main(): Promise<number> {
   console.log(`  waypoints    : ${ROUTE.waypoints.length} @ ${ROUTE.leg_minutes} min legs`);
   console.log(`  spikes       : ${Object.keys(spikes).length ? JSON.stringify(spikes) : 'none'}`);
   console.log(`  no humidity  : ${degraded.length ? degraded.join(', ') : 'none'}`);
+  console.log(`  auto-execute : ${allowAutoExecute ? 'ALLOWED (--auto-execute)' : 'capped at draft (default)'}`);
   console.log(`  sink         : ${persistUrl ? 'Postgres (PERSISTED)' : 'in-memory'}`);
   line();
 
-  const { events, compliance, cargo } = await pipeline.run(telemetry, readings);
+  const { events, compliance, cargo, decisions } = await pipeline.run(telemetry, readings);
 
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
     const h = compliance[i];
     const c = cargo[i];
-    if (!e || !h || !c) continue;
+    const d = decisions[i];
+    if (!e || !h || !c || !d) continue;
 
     console.log(`\n▸ ${e.waypoint_id}  ${e.timestamp}`);
     console.log(
@@ -116,10 +132,14 @@ async function main(): Promise<number> {
     console.log(
       `    CARGO   ${c.assessment.risk_level.toUpperCase().padEnd(8)} exposure ${c.assessment.cumulative_exposure_score}/${c.assessment.threshold} °C·h  → ${c.assessment.recommended_action}`,
     );
+    console.log(
+      `    DECIDE  ${d.action_tier.toUpperCase().padEnd(8)} confidence ${d.confidence}  (fallback rule, no model)`,
+    );
+    console.log(`            "${d.rationale}"`);
   }
 
   line();
-  console.log('Audit log — one event, two liability responses, correlated by event_id');
+  console.log('Audit log — one event, three responses, correlated by event_id');
   line();
   const entries = await sink.read();
   for (const entry of entries) {
@@ -128,7 +148,7 @@ async function main(): Promise<number> {
     );
   }
   line();
-  console.log(`${entries.length} entries for ${events.length} events (1 event + 2 responses each).`);
+  console.log(`${entries.length} entries for ${events.length} events (1 event + 2 evaluations + 1 decision each).`);
   if (!persistUrl) console.log('Nothing was written to a real database.');
   line();
 

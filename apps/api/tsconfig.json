@@ -9,6 +9,7 @@
   "references": [
     { "path": "../../packages/types" },
     { "path": "../../packages/audit" },
+    { "path": "../../packages/decision-layer" },
     { "path": "../../packages/fortyguard-client" },
     { "path": "../../packages/ingestion" },
     { "path": "../../packages/risk-engine" }

@@ -17,6 +17,7 @@
   "dependencies": {
     "@fastify/cors": "^10.0.1",
     "@threshold/audit": "*",
+    "@threshold/decision-layer": "*",
     "@threshold/fortyguard-client": "*",
     "@threshold/ingestion": "*",
     "@threshold/risk-engine": "*",

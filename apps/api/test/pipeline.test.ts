@@ -4,13 +4,20 @@
  *   "feed a synthetic breach event in, both evaluators independently produce
  *    correct, audit-logged outputs."
  *
- * Plus §1's core insight made checkable: one event, two liability responses,
- * correlated by event_id in a single append-only log.
+ * §6/§9 Phase 3 exit condition (fallback only — see the describe block below):
+ *
+ *   "a breach event produces a logged decision with a rationale string a
+ *    human could read and understand without you explaining it."
+ *
+ * Plus §1's core insight made checkable: one event, two liability responses
+ * (now three, with the fallback decision), correlated by event_id in a single
+ * append-only log.
  */
 
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
 import { InMemoryAuditSink } from '@threshold/audit';
+import { HardCodedThresholdDecider } from '@threshold/decision-layer';
 import {
   SimulatedTelemetryAdapter,
   SyntheticThermalReadingSource,
@@ -19,6 +26,7 @@ import {
 import { RouteRegistry } from '@threshold/risk-engine';
 import {
   assertValid,
+  validateAgentDecision,
   validateCargoRiskAssessment,
   validateComplianceRecord,
   validateThermalExposureEvent,
@@ -39,14 +47,22 @@ const ROUTE: RouteSpec = {
   ],
 };
 
-function build(readingOptions: Record<string, unknown> = {}) {
+function build(
+  readingOptions: Record<string, unknown> = {},
+  pipelineOptions: { decider?: HardCodedThresholdDecider | null } = {},
+) {
   const sink = new InMemoryAuditSink();
   const routes = new RouteRegistry().register({
     route_id: ROUTE.route_id,
     driver_id: ROUTE.driver_id,
     cargo_class: ROUTE.cargo_class,
   });
-  const pipeline = new RiskPipeline({ sink, routes, initialExposureHours: 1 });
+  const pipeline = new RiskPipeline({
+    sink,
+    routes,
+    initialExposureHours: 1,
+    ...pipelineOptions,
+  });
   const telemetry = new SimulatedTelemetryAdapter({ route: ROUTE, seed: 1234 });
   const readings = new SyntheticThermalReadingSource({ seed: 99, ...readingOptions });
   return { sink, pipeline, telemetry, readings };
@@ -88,8 +104,14 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
         case 'cargo_risk_assessment':
           assertValid('logged CargoRiskAssessment', validateCargoRiskAssessment(entry.payload));
           break;
+        case 'agent_decision':
+          assertValid('logged AgentDecision', validateAgentDecision(entry.payload));
+          break;
         default:
-          assert.fail(`unexpected entry_type ${entry.entry_type} in Phase 2`);
+          // Exhaustive: every entry_type Phase 3 can produce is handled above.
+          // Reaching here means a new entry_type exists that this test (and
+          // the pipeline) hasn't been taught about yet.
+          assert.fail(`unexpected entry_type: ${JSON.stringify(entry)}`);
       }
     }
   });
@@ -119,15 +141,16 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
     assert.deepEqual([...seqs].sort((a, b) => a - b), seqs);
   });
 
-  it('writes exactly three entries per event — one event, two responses', async () => {
+  it('writes exactly four entries per event — one event, two evaluations, one decision', async () => {
     const { sink, pipeline, telemetry, readings } = build();
     await pipeline.run(telemetry, readings);
     const entries = await sink.read();
 
-    assert.equal(entries.length, 12); // 4 events x 3
+    assert.equal(entries.length, 16); // 4 events x 4
     assert.equal(entries.filter((e) => e.entry_type === 'thermal_exposure_event').length, 4);
     assert.equal(entries.filter((e) => e.entry_type === 'compliance_record').length, 4);
     assert.equal(entries.filter((e) => e.entry_type === 'cargo_risk_assessment').length, 4);
+    assert.equal(entries.filter((e) => e.entry_type === 'agent_decision').length, 4);
   });
 
   describe('the core insight (§1): one heat spike, both liabilities fire', () => {
@@ -149,14 +172,14 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
       assert.equal(cargoAtSpike.assessment.risk_level, 'breach');
       assert.equal(cargoAtSpike.assessment.recommended_action, 'claim_draft');
 
-      // And the correlation key ties all three rows together — the query the
+      // And the correlation key ties all four rows together — the query the
       // demo actually shows a judge.
       const eventId = events[spikeIndex]?.event_id;
       const related = (await sink.read()).filter((e) => e.event_id === eventId);
-      assert.equal(related.length, 3);
+      assert.equal(related.length, 4);
       assert.deepEqual(
         related.map((e) => e.entry_type).sort(),
-        ['cargo_risk_assessment', 'compliance_record', 'thermal_exposure_event'],
+        ['agent_decision', 'cargo_risk_assessment', 'compliance_record', 'thermal_exposure_event'],
       );
     });
   });
@@ -205,5 +228,93 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
       entries.map((e) => ({ type: e.entry_type, route: e.route_id, seq: e.seq }));
 
     assert.deepEqual(strip(await first.sink.read()), strip(await second.sink.read()));
+  });
+
+  describe('Phase 3 exit condition (§9 fallback only — no LLM orchestrator)', () => {
+    it('a breach event produces a logged decision with a readable rationale', async () => {
+      const { sink, pipeline, telemetry, readings } = build({ spikes: { 'wp-3': 20 } });
+      const { events, decisions } = await pipeline.run(telemetry, readings);
+
+      const spikeIndex = events.findIndex((e) => e.waypoint_id === 'wp-3');
+      const decision = decisions[spikeIndex];
+      assert.ok(decision);
+      assertValid('AgentDecision', validateAgentDecision(decision));
+
+      // "a rationale string a human could read and understand without you
+      // explaining it" — check it actually says something, not just that a
+      // string exists.
+      assert.ok(decision.rationale.length > 40);
+      assert.match(decision.rationale, /driver side/i);
+      assert.match(decision.rationale, /cargo side/i);
+      assert.notEqual(decision.action_tier, 'alert', 'a breach event should escalate past alert');
+
+      const logged = (await sink.read()).find(
+        (e) => e.entry_type === 'agent_decision' && e.event_id === decision.event_id,
+      );
+      assert.ok(logged);
+      assert.equal(logged.rationale, decision.rationale);
+    });
+
+    it('the decision references the record ids actually written to the audit log', async () => {
+      const { sink, pipeline, telemetry, readings } = build({ spikes: { 'wp-3': 20 } });
+      const { events, decisions } = await pipeline.run(telemetry, readings);
+      const spikeIndex = events.findIndex((e) => e.waypoint_id === 'wp-3');
+      const decision = decisions[spikeIndex];
+      assert.ok(decision);
+
+      // sink is typed as InMemoryAuditSink by build(), so ofType() narrows
+      // .payload properly — a plain .find() over the union would not.
+      const loggedCompliance = sink
+        .ofType('compliance_record')
+        .find((e) => e.event_id === decision.event_id);
+      const loggedCargo = sink
+        .ofType('cargo_risk_assessment')
+        .find((e) => e.event_id === decision.event_id);
+      assert.ok(loggedCompliance && loggedCargo);
+      assert.equal(decision.inputs.compliance_record_id, loggedCompliance.payload.record_id);
+      assert.equal(decision.inputs.cargo_assessment_id, loggedCargo.payload.assessment_id);
+    });
+
+    it('defaults to capping at draft even when both sides hit their worst band', async () => {
+      // Default pipeline construction — no decider option passed, matching
+      // what a real caller gets without opting into anything.
+      const { pipeline, telemetry, readings } = build({ spikes: { 'wp-3': 20 } });
+      const { events, decisions } = await pipeline.run(telemetry, readings);
+      const decision = decisions[events.findIndex((e) => e.waypoint_id === 'wp-3')];
+      assert.ok(decision);
+      assert.equal(decision.action_tier, 'draft');
+      assert.notEqual(decision.action_tier, 'auto_execute');
+    });
+
+    it('reaches auto_execute only when explicitly enabled via the injected decider', async () => {
+      const { pipeline, telemetry, readings } = build(
+        { spikes: { 'wp-3': 20 } },
+        { decider: new HardCodedThresholdDecider({ allowAutoExecute: true }) },
+      );
+      const { events, decisions } = await pipeline.run(telemetry, readings);
+      const decision = decisions[events.findIndex((e) => e.waypoint_id === 'wp-3')];
+      assert.ok(decision);
+      assert.equal(decision.action_tier, 'auto_execute');
+    });
+
+    it('a fully nominal route stays at alert with high confidence throughout', async () => {
+      const { pipeline, telemetry, readings } = build(); // no spikes, no degraded humidity
+      const { decisions } = await pipeline.run(telemetry, readings);
+      assert.equal(decisions.length, 4);
+      for (const decision of decisions) {
+        assert.equal(decision.action_tier, 'alert');
+        assert.equal(decision.confidence, 0.9);
+      }
+    });
+
+    it('passing decider: null disables the Agent Decision Layer entirely', async () => {
+      const { sink, pipeline, telemetry, readings } = build(
+        { spikes: { 'wp-3': 20 } },
+        { decider: null },
+      );
+      const { decisions } = await pipeline.run(telemetry, readings);
+      assert.equal(decisions.length, 0);
+      assert.equal((await sink.read()).filter((e) => e.entry_type === 'agent_decision').length, 0);
+    });
   });
 });
