@@ -4,5 +4,6 @@ export {
   validateThermalExposureEvent,
   validateComplianceRecord,
   validateCargoRiskAssessment,
+  validateAgentDecision,
   assertValid,
 } from './validate.js';

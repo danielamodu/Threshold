@@ -14,6 +14,7 @@
  */
 
 import type {
+  AgentDecision,
   CargoRiskAssessment,
   ComplianceRecord,
   ThermalExposureEvent,
@@ -25,6 +26,7 @@ const COMPLIANCE_ACTIONS = ['rest_break_scheduled', 'work_limit_reduced', 'none'
 const SCHEDULE_TYPES = ['rest', 'reduced_load'];
 const RISK_LEVELS = ['nominal', 'elevated', 'breach'];
 const RECOMMENDED_ACTIONS = ['none', 'reroute', 'claim_draft'];
+const ACTION_TIERS = ['alert', 'draft', 'auto_execute'];
 
 const UUID_RE = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 
@@ -209,6 +211,40 @@ export function validateCargoRiskAssessment(value: unknown): string[] {
   return out;
 }
 
+/**
+ * §3 — AgentDecision.
+ *
+ * `rationale` is checked as non-empty here in addition to the database's own
+ * check constraint (§2: "a decision with no rationale is not auditable") —
+ * this validator should catch it before an insert ever gets the chance to.
+ */
+export function validateAgentDecision(value: unknown): string[] {
+  const out: string[] = [];
+  if (!isRecord(value)) return ['decision must be an object'];
+
+  checkUuid(out, value, 'decision_id');
+  checkUuid(out, value, 'event_id');
+  checkNumber(out, value, 'confidence');
+  checkEnum(out, value, 'action_tier', ACTION_TIERS);
+  checkIso8601(out, value, 'timestamp');
+  checkString(out, value, 'rationale');
+
+  const confidence = value['confidence'];
+  if (typeof confidence === 'number' && (confidence < 0 || confidence > 1)) {
+    out.push(`confidence must be within 0..1, got ${describe(confidence)}`);
+  }
+
+  const inputs = value['inputs'];
+  if (!isRecord(inputs)) {
+    out.push(`inputs must be an object, got ${describe(inputs)}`);
+  } else {
+    checkUuid(out, inputs, 'compliance_record_id');
+    checkUuid(out, inputs, 'cargo_assessment_id');
+  }
+
+  return out;
+}
+
 /** Throwing wrapper for tests and boundaries. */
 export function assertValid(
   label: string,
@@ -219,4 +255,4 @@ export function assertValid(
   }
 }
 
-export type { ThermalExposureEvent, ComplianceRecord, CargoRiskAssessment };
+export type { ThermalExposureEvent, ComplianceRecord, CargoRiskAssessment, AgentDecision };
