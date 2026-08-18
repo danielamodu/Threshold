@@ -1,11 +1,15 @@
 /*
- * Phase 0 baseline only.
+ * Phase 5 palette (§5).
  *
- * §5 specifies a cool slate/indigo base with a temperature gradient used
- * DIAGNOSTICALLY (blue nominal → amber elevated → red breach), and explicitly
- * rules out the stored amber.dark default. It also says to confirm direction
- * before the dashboard build starts — that is Phase 5. Nothing here commits to
- * a palette; these are neutral scaffolding tokens meant to be replaced.
+ * Cool slate/indigo base, not pure black — carried over from Phase 0's
+ * scaffolding tokens unchanged. --risk-low/--risk-mid/--risk-high are the
+ * actual product decision this section makes: a temperature gradient used
+ * DIAGNOSTICALLY, as the risk-state indicator itself — the amber.dark stored
+ * default is not used anywhere, and these three colors are the ONLY place
+ * color communicates meaning in the dashboard. They are read directly by
+ * RouteMap.tsx and Timeline.tsx from @threshold/decision-layer's own
+ * severity buckets, so the map, the timeline, and the decision layer's own
+ * reasoning can never show three different colors for the same waypoint.
  */
 
 :root {
@@ -15,6 +19,10 @@
   --text: #e6e9f0;
   --text-muted: #939bb0;
   --accent: #6b7cff;
+
+  --risk-low: #4c8dff;
+  --risk-mid: #e0a83e;
+  --risk-high: #e0524a;
 }
 
 * {

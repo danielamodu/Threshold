@@ -10,6 +10,12 @@
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
+    "@threshold/audit": "*",
+    "@threshold/decision-layer": "*",
+    "@threshold/ingestion": "*",
+    "@threshold/output": "*",
+    "@threshold/pipeline": "*",
+    "@threshold/risk-engine": "*",
     "@threshold/types": "*",
     "next": "^15.0.0",
     "react": "^18.3.1",

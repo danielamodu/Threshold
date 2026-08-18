@@ -1,29 +1,45 @@
 /**
- * Phase 0 placeholder.
+ * Judge-facing dashboard (§2, §6 Phase 5).
  *
- * The judge-facing dashboard — live route map, heat-spike injector, and the
- * side-by-side event timeline — is Phase 5. This page exists so the Vercel
- * deploy skeleton has something real to serve.
+ * The entire interaction model is one button. §6's exit condition: "a
+ * stranger could click the injector and understand what happened without
+ * narration." Nothing else is here on purpose — see the project memory on
+ * keeping Phase 5 to exactly map + injector + timeline, no scope creep.
+ *
+ * Runs `runDemoRoute` in-process via a Server Action — see actions.ts for why
+ * that's deliberate, not a shortcut.
  */
 
-const PHASE_0 = [
-  'Monorepo: apps/web, apps/api, packages/types, packages/fortyguard-client',
-  'Data contracts mirrored from §3',
-  'Append-only audit log migration (§2)',
-  'FortyGuard async submit/poll client (§8)',
-  'CI: lint + typecheck on push',
-  'Deploy skeletons: Vercel + EC2/PM2',
-];
+'use client';
+
+import { useCallback, useEffect, useState } from 'react';
+import { runDemoRoute } from './actions';
+import { RouteMap } from './components/RouteMap';
+import { Timeline } from './components/Timeline';
+import { INJECTOR_WAYPOINT_ID, type DemoRunResult } from './demo-types';
 
 export default function Page() {
+  const [result, setResult] = useState<DemoRunResult | null>(null);
+  const [loading, setLoading] = useState(true);
+  const [error, setError] = useState<string | null>(null);
+
+  const load = useCallback((spike: boolean) => {
+    setLoading(true);
+    setError(null);
+    runDemoRoute(spike)
+      .then(setResult)
+      .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
+      .finally(() => setLoading(false));
+  }, []);
+
+  useEffect(() => {
+    load(false);
+  }, [load]);
+
+  const spiked = result?.spiked ?? false;
+
   return (
-    <main
-      style={{
-        maxWidth: '46rem',
-        margin: '0 auto',
-        padding: '4rem 1.5rem',
-      }}
-    >
+    <main style={{ maxWidth: '52rem', margin: '0 auto', padding: '3rem 1.5rem 4rem' }}>
       <p
         style={{
           margin: 0,
@@ -33,45 +49,64 @@ export default function Page() {
           color: 'var(--text-muted)',
         }}
       >
-        Phase 0 · Foundation &amp; Verification
+        Threshold — live demo
+      </p>
+      <h1 style={{ fontSize: '2rem', lineHeight: 1.15, margin: '0.5rem 0 0' }}>
+        One heat event, two liability responses
+      </h1>
+      <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+        {result ? `${result.route_id} · ${result.cargo_class} · driver ${result.driver_id}` : 'Loading route…'}
       </p>
 
-      <h1 style={{ fontSize: '2.5rem', lineHeight: 1.1, margin: '0.75rem 0 0' }}>Threshold</h1>
+      <div style={{ margin: '1.75rem 0' }}>
+        <button
+          type="button"
+          onClick={() => load(!spiked)}
+          disabled={loading}
+          style={{
+            padding: '0.75rem 1.5rem',
+            fontSize: '1rem',
+            fontWeight: 600,
+            color: spiked ? 'var(--surface)' : 'var(--text)',
+            background: spiked ? 'var(--risk-high)' : 'var(--surface-raised)',
+            border: `1px solid ${spiked ? 'var(--risk-high)' : 'var(--border)'}`,
+            borderRadius: '0.6rem',
+            cursor: loading ? 'wait' : 'pointer',
+            opacity: loading ? 0.6 : 1,
+          }}
+        >
+          {loading ? 'Running…' : spiked ? 'Reset route' : `Inject heat spike at ${INJECTOR_WAYPOINT_ID}`}
+        </button>
+      </div>
 
-      <p style={{ color: 'var(--text-muted)', fontSize: '1.05rem', marginTop: '0.75rem' }}>
-        Unified thermal-liability engine for temperature-controlled fleets.
-      </p>
+      {error && (
+        <p style={{ color: 'var(--risk-high)' }}>
+          Failed to run the demo route: {error}
+        </p>
+      )}
 
-      <p style={{ marginTop: '2rem' }}>
-        One heat event exposes two liability surfaces at once — the driver and the cargo. Both are
-        resolved from a single FortyGuard-fed event, in one pass.
-      </p>
+      {result && (
+        <>
+          <section
+            style={{
+              padding: '1.25rem',
+              background: 'var(--surface-raised)',
+              border: '1px solid var(--border)',
+              borderRadius: '0.75rem',
+            }}
+          >
+            <RouteMap waypoints={result.waypoints} />
+          </section>
 
-      <section
-        style={{
-          marginTop: '2.5rem',
-          padding: '1.5rem',
-          background: 'var(--surface-raised)',
-          border: `1px solid var(--border)`,
-          borderRadius: '0.75rem',
-        }}
-      >
-        <h2 style={{ fontSize: '0.8rem', textTransform: 'uppercase', letterSpacing: '0.1em', margin: 0, color: 'var(--text-muted)' }}>
-          Scaffolded in this phase
-        </h2>
-        <ul style={{ margin: '1rem 0 0', paddingLeft: '1.1rem', color: 'var(--text-muted)' }}>
-          {PHASE_0.map((item) => (
-            <li key={item} style={{ marginBottom: '0.4rem' }}>
-              {item}
-            </li>
-          ))}
-        </ul>
-      </section>
-
-      <p style={{ marginTop: '2rem', fontSize: '0.9rem', color: 'var(--text-muted)' }}>
-        The dashboard lands in Phase 5. Palette direction is deferred pending sign-off per §5 — the
-        colours here are neutral scaffolding, not the product palette.
-      </p>
+          <h2 style={{ fontSize: '1.1rem', marginTop: '2.25rem', marginBottom: '0.25rem' }}>
+            Event timeline
+          </h2>
+          <p style={{ margin: '0 0 0.5rem', fontSize: '0.85rem', color: 'var(--text-muted)' }}>
+            Every waypoint, both liability responses, side by side.
+          </p>
+          <Timeline waypoints={result.waypoints} />
+        </>
+      )}
     </main>
   );
 }
