@@ -16,6 +16,7 @@
 
 import { strict as assert } from 'node:assert';
 import { describe, it } from 'node:test';
+import { PDFDocument } from 'pdf-lib';
 import { InMemoryAuditSink } from '@threshold/audit';
 import { HardCodedThresholdDecider } from '@threshold/decision-layer';
 import {
@@ -23,6 +24,7 @@ import {
   SyntheticThermalReadingSource,
   type RouteSpec,
 } from '@threshold/ingestion';
+import { InMemoryPdfStore, RecordingWebhookEmitter, type WebhookEmitter } from '@threshold/output';
 import { RouteRegistry } from '@threshold/risk-engine';
 import {
   assertValid,
@@ -31,7 +33,7 @@ import {
   validateComplianceRecord,
   validateThermalExposureEvent,
 } from '@threshold/types';
-import { RiskPipeline } from '../src/pipeline.js';
+import { RiskPipeline } from '../src/risk-pipeline.js';
 
 const ROUTE: RouteSpec = {
   route_id: 'route-phx-01',
@@ -47,25 +49,37 @@ const ROUTE: RouteSpec = {
   ],
 };
 
-function build(
-  readingOptions: Record<string, unknown> = {},
-  pipelineOptions: { decider?: HardCodedThresholdDecider | null } = {},
-) {
+interface BuildPipelineOptions {
+  decider?: HardCodedThresholdDecider | null;
+  pdfStore?: InMemoryPdfStore;
+  webhookEmitter?: WebhookEmitter | null;
+}
+
+function build(readingOptions: Record<string, unknown> = {}, pipelineOptions: BuildPipelineOptions = {}) {
   const sink = new InMemoryAuditSink();
   const routes = new RouteRegistry().register({
     route_id: ROUTE.route_id,
     driver_id: ROUTE.driver_id,
     cargo_class: ROUTE.cargo_class,
   });
+  const pdfStore = pipelineOptions.pdfStore ?? new InMemoryPdfStore();
   const pipeline = new RiskPipeline({
     sink,
     routes,
     initialExposureHours: 1,
     ...pipelineOptions,
+    pdfStore,
   });
   const telemetry = new SimulatedTelemetryAdapter({ route: ROUTE, seed: 1234 });
   const readings = new SyntheticThermalReadingSource({ seed: 99, ...readingOptions });
-  return { sink, pipeline, telemetry, readings };
+  return { sink, pipeline, telemetry, readings, pdfStore };
+}
+
+/** memory://filename -> filename, the InMemoryPdfStore key. */
+function pdfFilenameFromUrl(url: string | null): string {
+  assert.ok(url, 'expected a non-null exported_pdf_url');
+  assert.match(url, /^memory:\/\//);
+  return url.replace('memory://', '');
 }
 
 describe('risk pipeline (Phase 2 exit condition)', () => {
@@ -315,6 +329,94 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
       const { decisions } = await pipeline.run(telemetry, readings);
       assert.equal(decisions.length, 0);
       assert.equal((await sink.read()).filter((e) => e.entry_type === 'agent_decision').length, 0);
+    });
+  });
+
+  describe('Phase 4 exit condition (§6/§9 output/integration layer)', () => {
+    it('one breach event produces both a real compliance PDF and a real claim draft, both viewable, both timestamped', async () => {
+      const { pipeline, telemetry, readings, pdfStore } = build({ spikes: { 'wp-3': 20 } });
+      const { events, compliance, cargo, claimDrafts } = await pipeline.run(telemetry, readings);
+
+      const i = events.findIndex((e) => e.waypoint_id === 'wp-3');
+      const record = compliance[i]?.record;
+      const assessment = cargo[i]?.assessment;
+      assert.ok(record && assessment);
+      assert.equal(assessment.risk_level, 'breach', 'sanity: this must actually be a breach event');
+
+      // Compliance PDF — real bytes, not a placeholder string.
+      const compliancePdfBytes = pdfStore.get(pdfFilenameFromUrl(record.exported_pdf_url));
+      assert.ok(compliancePdfBytes);
+      const compliancePdf = await PDFDocument.load(compliancePdfBytes);
+      assert.equal(compliancePdf.getPageCount(), 1);
+      assert.ok(record.generated_at, 'compliance record must be timestamped');
+
+      // Claim draft — same standard: real PDF bytes, linked back to this event.
+      const draft = claimDrafts.find((d) => d.event_id === record.event_id);
+      assert.ok(draft);
+      assert.equal(draft.claim_draft_id, assessment.claim_draft_id);
+      const claimPdfBytes = pdfStore.get(pdfFilenameFromUrl(draft.exported_pdf_url));
+      assert.ok(claimPdfBytes);
+      const claimPdf = await PDFDocument.load(claimPdfBytes);
+      assert.equal(claimPdf.getPageCount(), 1);
+      assert.ok(draft.generated_at, 'claim draft must be timestamped');
+    });
+
+    it('every compliance record is exportable, not only breaches — it is the standing documentation', async () => {
+      const { pipeline, telemetry, readings, pdfStore } = build(); // no spikes at all
+      const { compliance } = await pipeline.run(telemetry, readings);
+
+      assert.equal(compliance.length, 4);
+      for (const { record } of compliance) {
+        assert.equal(record.action, 'none'); // sanity: nothing escalated
+        const bytes = pdfStore.get(pdfFilenameFromUrl(record.exported_pdf_url));
+        assert.ok(bytes, `expected a PDF even for a nominal record (${record.record_id})`);
+      }
+    });
+
+    it('no claim draft is generated for a non-breach event', async () => {
+      const { pipeline, telemetry, readings } = build(); // no spikes
+      const { cargo, claimDrafts } = await pipeline.run(telemetry, readings);
+
+      for (const { assessment } of cargo) assert.equal(assessment.claim_draft_id, null);
+      assert.equal(claimDrafts.length, 0);
+    });
+
+    it('an elevated (not yet breaching) event gets a mocked reroute suggestion instead of a claim draft', async () => {
+      // A moderate spike that lands in 'elevated', not 'breach'.
+      const { pipeline, telemetry, readings } = build({ spikes: { 'wp-2': 6 } });
+      const { events, cargo, claimDrafts } = await pipeline.run(telemetry, readings);
+
+      const i = events.findIndex((e) => e.waypoint_id === 'wp-2');
+      const assessment = cargo[i]?.assessment;
+      assert.ok(assessment);
+      assert.equal(assessment.risk_level, 'elevated');
+      assert.equal(assessment.claim_draft_id, null);
+      assert.ok(assessment.reroute_suggestion, 'expected a mocked reroute suggestion');
+      assert.equal((assessment.reroute_suggestion as { mocked: boolean }).mocked, true);
+      assert.equal(claimDrafts.length, 0);
+    });
+
+    it('emits a webhook for every decision, carrying the full chain that produced it', async () => {
+      const emitter = new RecordingWebhookEmitter();
+      const { pipeline, telemetry, readings } = build({ spikes: { 'wp-3': 20 } }, { webhookEmitter: emitter });
+      const { events, decisions } = await pipeline.run(telemetry, readings);
+
+      assert.equal(emitter.deliveries.length, events.length);
+
+      const i = events.findIndex((e) => e.waypoint_id === 'wp-3');
+      const delivery = emitter.deliveries[i];
+      const decision = decisions[i];
+      assert.ok(delivery && decision);
+      assert.equal(delivery.decision.decision_id, decision.decision_id);
+      assert.equal(delivery.thermal_event.event_id, events[i]?.event_id);
+      assert.equal(delivery.version, '1');
+    });
+
+    it('webhookEmitter: null skips emission entirely', async () => {
+      const { pipeline, telemetry, readings } = build({}, { webhookEmitter: null });
+      // Should not throw with no emitter configured.
+      await pipeline.run(telemetry, readings);
+      assert.equal(pipeline.webhookEmitter, null);
     });
   });
 });

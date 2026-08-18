@@ -12,6 +12,7 @@
     "test": "node --import tsx --test \"test/**/*.test.ts\"",
     "typecheck": "tsc -p tsconfig.check.json",
     "simulate": "tsx scripts/simulate.ts",
+    "simulate:real": "tsx scripts/real-ingest.ts",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {
@@ -20,6 +21,8 @@
     "@threshold/decision-layer": "*",
     "@threshold/fortyguard-client": "*",
     "@threshold/ingestion": "*",
+    "@threshold/output": "*",
+    "@threshold/pipeline": "*",
     "@threshold/risk-engine": "*",
     "@threshold/types": "*",
     "dotenv": "^16.4.5",

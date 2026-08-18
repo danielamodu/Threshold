@@ -12,6 +12,8 @@
     { "path": "../../packages/decision-layer" },
     { "path": "../../packages/fortyguard-client" },
     { "path": "../../packages/ingestion" },
+    { "path": "../../packages/output" },
+    { "path": "../../packages/pipeline" },
     { "path": "../../packages/risk-engine" }
   ]
 }

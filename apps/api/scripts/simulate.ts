@@ -13,11 +13,20 @@
  * decision per §10 — this is the deterministic safety net that runs whether
  * or not that later layer ever lands.
  *
+ * And Phase 4's Output/Integration Layer (§6): every compliance record gets a
+ * real PDF (written to artifacts/pdfs/, gitignored), a breach gets a claim
+ * draft PDF too, an elevated (not yet breaching) event gets a mocked reroute
+ * suggestion, and every decision fires a webhook — recorded here rather than
+ * sent, since nothing external subscribes yet (pass --webhook-url to send
+ * for real).
+ *
  *   npm run simulate --workspace @threshold/api
  *   npm run simulate --workspace @threshold/api -- --spike wp-3=20
  *   npm run simulate --workspace @threshold/api -- --spike wp-3=20 --auto-execute
+ *   npm run simulate --workspace @threshold/api -- --spike wp-3=20 --webhook-url https://example.com/hook
  */
 
+import { resolve } from 'node:path';
 import { InMemoryAuditSink, PostgresAuditSink, type AuditSink } from '@threshold/audit';
 import { HardCodedThresholdDecider } from '@threshold/decision-layer';
 import {
@@ -25,8 +34,14 @@ import {
   SyntheticThermalReadingSource,
   type RouteSpec,
 } from '@threshold/ingestion';
+import {
+  HttpWebhookEmitter,
+  LocalFilePdfStore,
+  RecordingWebhookEmitter,
+  type WebhookEmitter,
+} from '@threshold/output';
+import { RiskPipeline } from '@threshold/pipeline';
 import { RouteRegistry } from '@threshold/risk-engine';
-import { RiskPipeline } from '../src/pipeline.js';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -67,6 +82,7 @@ async function main(): Promise<number> {
   const spikes = parseSpikes();
   const degraded = (arg('no-humidity') ?? '').split(',').filter(Boolean);
   const allowAutoExecute = process.argv.includes('--auto-execute');
+  const webhookUrl = arg('webhook-url');
 
   let sink: AuditSink;
   if (persistUrl) {
@@ -82,11 +98,18 @@ async function main(): Promise<number> {
     cargo_class: ROUTE.cargo_class,
   });
 
+  const pdfDir = resolve(import.meta.dirname, '../../../artifacts/pdfs');
+  const webhookEmitter: WebhookEmitter = webhookUrl
+    ? new HttpWebhookEmitter(webhookUrl)
+    : new RecordingWebhookEmitter();
+
   const pipeline = new RiskPipeline({
     sink,
     routes,
     initialExposureHours: 1,
     decider: new HardCodedThresholdDecider({ allowAutoExecute }),
+    pdfStore: new LocalFilePdfStore(pdfDir, '/pdfs'),
+    webhookEmitter,
   });
   const telemetry = new SimulatedTelemetryAdapter({ route: ROUTE, seed: 1234 });
   const readings = new SyntheticThermalReadingSource({
@@ -106,9 +129,11 @@ async function main(): Promise<number> {
   console.log(`  no humidity  : ${degraded.length ? degraded.join(', ') : 'none'}`);
   console.log(`  auto-execute : ${allowAutoExecute ? 'ALLOWED (--auto-execute)' : 'capped at draft (default)'}`);
   console.log(`  sink         : ${persistUrl ? 'Postgres (PERSISTED)' : 'in-memory'}`);
+  console.log(`  PDFs         : ${pdfDir}`);
+  console.log(`  webhook      : ${webhookUrl ? `POST ${webhookUrl}` : 'recorded only (no --webhook-url given)'}`);
   line();
 
-  const { events, compliance, cargo, decisions } = await pipeline.run(telemetry, readings);
+  const { events, compliance, cargo, decisions, claimDrafts } = await pipeline.run(telemetry, readings);
 
   for (let i = 0; i < events.length; i++) {
     const e = events[i];
@@ -132,6 +157,16 @@ async function main(): Promise<number> {
     console.log(
       `    CARGO   ${c.assessment.risk_level.toUpperCase().padEnd(8)} exposure ${c.assessment.cumulative_exposure_score}/${c.assessment.threshold} °C·h  → ${c.assessment.recommended_action}`,
     );
+    console.log(`            compliance PDF: ${h.record.exported_pdf_url}`);
+
+    if (c.assessment.claim_draft_id) {
+      const draft = claimDrafts.find((d2) => d2.claim_draft_id === c.assessment.claim_draft_id);
+      console.log(`            claim draft:    ${draft?.exported_pdf_url ?? '(pending)'}`);
+    } else if (c.assessment.reroute_suggestion) {
+      const r = c.assessment.reroute_suggestion as { suggested_action: string; advisory: string };
+      console.log(`            reroute (mock): ${r.suggested_action} — "${r.advisory}"`);
+    }
+
     console.log(
       `    DECIDE  ${d.action_tier.toUpperCase().padEnd(8)} confidence ${d.confidence}  (fallback rule, no model)`,
     );
@@ -149,7 +184,12 @@ async function main(): Promise<number> {
   }
   line();
   console.log(`${entries.length} entries for ${events.length} events (1 event + 2 evaluations + 1 decision each).`);
+  console.log(`${claimDrafts.length} claim draft(s) generated (breach events only).`);
+  if (webhookEmitter instanceof RecordingWebhookEmitter) {
+    console.log(`${webhookEmitter.deliveries.length} webhook payload(s) recorded (nothing sent — no --webhook-url).`);
+  }
   if (!persistUrl) console.log('Nothing was written to a real database.');
+  console.log(`PDFs written under ${pdfDir}`);
   line();
 
   await sink.close();

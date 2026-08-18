@@ -1,8 +1,11 @@
 /**
  * Composition root for the risk pipeline.
  *
- * This is the only place the layers are wired together, and it is deliberately
- * in the app rather than in a package:
+ * Lives in its own package (`@threshold/pipeline`), not inside apps/api, since
+ * apps/web's Phase 5 dashboard needed the exact same wiring — duplicating a
+ * composition root across two apps would have been the actual DRY violation.
+ * It is still not a "real" architecture layer per §2's diagram; it is the glue
+ * between the layers, kept out of any of them individually:
  *
  *   - The evaluators stay PURE. They return their assessment and never write to
  *     the audit log themselves. §2 requires that evaluations be logged; it does
@@ -23,12 +26,33 @@
  * completed). Only the fallback decider (§9 Phase 3 item 1) is wired here; the
  * LLM orchestrator (item 2) is a separate, still-open decision per §10 and has
  * no wiring yet.
+ *
+ * ── Phase 4 outputs happen BEFORE logging, not after ────────────────────────
+ * `ComplianceRecord.exported_pdf_url` and `CargoRiskAssessment.claim_draft_id`
+ * / `.reroute_suggestion` are fields ON the §3 records — and `audit_log` is
+ * append-only, so there is no "log it, then patch in the URL." Each bus
+ * subscriber below builds its output artifact (PDF, claim draft, mocked
+ * reroute) and folds the result into the record BEFORE that record is pushed
+ * anywhere or appended to the sink. Only the finished record is ever logged.
  */
 
+import { randomUUID } from 'node:crypto';
 import type { AgentDecision, ThermalExposureEvent } from '@threshold/types';
 import type { AuditSink } from '@threshold/audit';
 import { HardCodedThresholdDecider } from '@threshold/decision-layer';
 import { ingest, type TelemetryAdapter, type ThermalReadingSource } from '@threshold/ingestion';
+import {
+  HttpWebhookEmitter,
+  InMemoryPdfStore,
+  buildWebhookPayload,
+  generateClaimDraft,
+  generateRerouteSuggestion,
+  renderClaimDraftPdf,
+  renderCompliancePdf,
+  type ClaimDraft,
+  type PdfStore,
+  type WebhookEmitter,
+} from '@threshold/output';
 import {
   CargoRiskEvaluator,
   EventBus,
@@ -53,6 +77,17 @@ export interface PipelineOptions {
    * entirely (useful for isolating Phase 1/2 behaviour in a test).
    */
   decider?: HardCodedThresholdDecider | null;
+  /** Where generated PDFs are persisted. Defaults to in-memory (no disk I/O). */
+  pdfStore?: PdfStore;
+  /**
+   * Defaults to a real `HttpWebhookEmitter` configured with no URL — a
+   * documented no-op, not skipped emission. See webhook.ts's file header:
+   * "nothing external consumes it yet" is meant literally, not faked by
+   * pretending the emitter doesn't exist. Pass `null` to skip emission
+   * entirely (e.g. isolating earlier phases in a test).
+   */
+  webhookEmitter?: WebhookEmitter | null;
+  newId?: () => string;
 }
 
 export interface PipelineResult {
@@ -60,6 +95,8 @@ export interface PipelineResult {
   compliance: ComplianceEvaluation[];
   cargo: CargoEvaluation[];
   decisions: AgentDecision[];
+  /** Only present for events that actually breached (§4 exit condition). */
+  claimDrafts: ClaimDraft[];
 }
 
 /**
@@ -74,16 +111,24 @@ export class RiskPipeline {
   readonly compliance: HumanComplianceEvaluator;
   readonly cargo: CargoRiskEvaluator;
   readonly decider: HardCodedThresholdDecider | null;
+  readonly pdfStore: PdfStore;
+  readonly webhookEmitter: WebhookEmitter | null;
 
   private readonly sink: AuditSink;
+  private readonly newId: () => string;
   private readonly complianceResults: ComplianceEvaluation[] = [];
   private readonly cargoResults: CargoEvaluation[] = [];
   private readonly decisions: AgentDecision[] = [];
+  private readonly claimDrafts: ClaimDraft[] = [];
 
   constructor(options: PipelineOptions) {
     this.sink = options.sink;
+    this.newId = options.newId ?? randomUUID;
     this.decider =
       options.decider === null ? null : (options.decider ?? new HardCodedThresholdDecider());
+    this.pdfStore = options.pdfStore ?? new InMemoryPdfStore();
+    this.webhookEmitter =
+      options.webhookEmitter === null ? null : (options.webhookEmitter ?? new HttpWebhookEmitter(null));
 
     this.compliance = new HumanComplianceEvaluator({
       routes: options.routes,
@@ -100,24 +145,58 @@ export class RiskPipeline {
     // pipeline" made structural rather than aspirational.
     this.bus.subscribe('human-compliance', async (event) => {
       const evaluation = this.compliance.evaluate(event);
-      this.complianceResults.push(evaluation);
+
+      // §4: every compliance record is exportable — not just breaches. This
+      // is the standing documentation, produced whether or not anything fired.
+      const pdfBytes = await renderCompliancePdf(evaluation.record, { route_id: event.route_id });
+      const exported_pdf_url = await this.pdfStore.save(
+        `compliance-${evaluation.record.record_id}.pdf`,
+        pdfBytes,
+      );
+      const finalRecord = { ...evaluation.record, exported_pdf_url };
+      const finalEvaluation = { ...evaluation, record: finalRecord };
+
+      this.complianceResults.push(finalEvaluation);
       await this.sink.append({
         entry_type: 'compliance_record',
         event_id: event.event_id,
         route_id: event.route_id,
-        payload: evaluation.record,
-        occurred_at: evaluation.record.generated_at,
+        payload: finalRecord,
+        occurred_at: finalRecord.generated_at,
       });
     });
 
     this.bus.subscribe('cargo-risk', async (event) => {
       const evaluation = this.cargo.evaluate(event);
-      this.cargoResults.push(evaluation);
+      let finalAssessment = evaluation.assessment;
+
+      if (evaluation.assessment.recommended_action === 'claim_draft') {
+        const draft = generateClaimDraft(evaluation.assessment, event.route_id, {
+          newId: this.newId,
+        });
+        const pdfBytes = await renderClaimDraftPdf(draft);
+        const exported_pdf_url = await this.pdfStore.save(`claim-${draft.claim_draft_id}.pdf`, pdfBytes);
+        const finalDraft = { ...draft, exported_pdf_url };
+        this.claimDrafts.push(finalDraft);
+        finalAssessment = { ...evaluation.assessment, claim_draft_id: finalDraft.claim_draft_id };
+      } else if (evaluation.assessment.recommended_action === 'reroute') {
+        // §3 types this field as the deliberately loose `object | null` —
+        // RerouteSuggestion is Phase 4's own shape underneath it, so the cast
+        // is the actual boundary between the locked contract and Phase 4's design.
+        const reroute_suggestion = generateRerouteSuggestion(
+          evaluation.assessment.cumulative_exposure_score,
+          evaluation.assessment.threshold,
+        ) as unknown as Record<string, unknown>;
+        finalAssessment = { ...evaluation.assessment, reroute_suggestion };
+      }
+
+      const finalEvaluation = { ...evaluation, assessment: finalAssessment };
+      this.cargoResults.push(finalEvaluation);
       await this.sink.append({
         entry_type: 'cargo_risk_assessment',
         event_id: event.event_id,
         route_id: event.route_id,
-        payload: evaluation.assessment,
+        payload: finalAssessment,
         occurred_at: event.timestamp,
       });
     });
@@ -126,7 +205,7 @@ export class RiskPipeline {
   /**
    * Log the event, fan it out to both evaluators, then — once both have
    * finished and their own audit writes have landed — run the Agent Decision
-   * Layer on their combined output.
+   * Layer on their combined output, and emit the webhook for that decision.
    */
   async handle(event: ThermalExposureEvent): Promise<AgentDecision | null> {
     await this.sink.append({
@@ -167,6 +246,17 @@ export class RiskPipeline {
       rationale: decision.rationale,
       occurred_at: decision.timestamp,
     });
+
+    if (this.webhookEmitter) {
+      const payload = buildWebhookPayload({
+        thermal_event: event,
+        compliance_record: complianceResult.record,
+        cargo_assessment: cargoResult.assessment,
+        decision,
+      });
+      await this.webhookEmitter.emit(payload);
+    }
+
     return decision;
   }
 
@@ -185,6 +275,7 @@ export class RiskPipeline {
       compliance: [...this.complianceResults],
       cargo: [...this.cargoResults],
       decisions: [...this.decisions],
+      claimDrafts: [...this.claimDrafts],
     };
   }
 
@@ -194,6 +285,7 @@ export class RiskPipeline {
       compliance: [...this.complianceResults],
       cargo: [...this.cargoResults],
       decisions: [...this.decisions],
+      claimDrafts: [...this.claimDrafts],
     };
   }
 }

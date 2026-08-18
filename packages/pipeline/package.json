@@ -1,0 +1,35 @@
+{
+  "name": "@threshold/pipeline",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Composition root wiring every layer together (§2) — moved here once a second consumer (apps/web) needed the same RiskPipeline apps/api already had",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@threshold/audit": "*",
+    "@threshold/decision-layer": "*",
+    "@threshold/ingestion": "*",
+    "@threshold/output": "*",
+    "@threshold/risk-engine": "*",
+    "@threshold/types": "*"
+  },
+  "devDependencies": {
+    "typescript": "^5.6.3"
+  }
+}
