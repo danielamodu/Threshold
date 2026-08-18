@@ -10,15 +10,28 @@
  * reported, never patched.
  *
  * Checked against the post-decision-log §3:
- *   temp_c        = Temperature_stats.Maximum   (§8 decision 1)
- *   temp_stats    = mean / max / min / stddev   (audit-only)
- *   humidity_pct  = relative_humidity_percent, NULLABLE (§8 decision 3)
+ *   temp_c        = stats_data.temperature_stats.maximum   (§8 decision 1)
+ *   temp_stats    = mean / max / min / stddev               (audit-only)
+ *   humidity_pct  = relative_humidity_percent, NULLABLE      (§8 decision 3)
  *   data_quality  = complete | degraded_no_humidity
- *   heat_index_c  is NOT an event field         (§8 decision 2)
+ *   heat_index_c  is NOT an event field                      (§8 decision 2)
  *
  *   npm run verify:fortyguard
  *   npm run verify:fortyguard -- --lat 33.4484 --lng -112.0740 --at 2026-08-13T18:00
  *   npm run verify:fortyguard -- --skip-env-params
+ *
+ * ── A live finding worth knowing before you run this ────────────────────────
+ * Verified 2026-08-18: `stats_data` keys are lowercase snake_case in the real
+ * response (`temperature_stats.maximum`, not the docs page's prose-cased
+ * `Temperature_stats.Maximum`). More importantly — queries at "now" or
+ * anywhere in the ±12h live/forecast window returned ZERO tiles (n_cells: 0)
+ * across two cities (NYC, Miami) and ten time offsets spanning that whole
+ * window. A fixed historical date (2024-07-15, FortyGuard's own docs example)
+ * returned 150–299 real tiles every time. This looks like a trial-key
+ * restriction on live/forecast data rather than a coverage gap — worth
+ * confirming with FortyGuard directly before relying on live data for a demo.
+ * `--at` defaults to "now"; pass an explicit historical date to reliably get
+ * real tiles until that's resolved.
  */
 
 import { mkdirSync, writeFileSync } from 'node:fs';
@@ -28,6 +41,7 @@ import { config as loadDotenv } from 'dotenv';
 import {
   FortyGuardClient,
   describeKey,
+  firstEnvParamsValue,
   redactSecret,
   squareAoiAreaSqMiles,
   squareAoiAround,
@@ -96,17 +110,6 @@ const BADGE: Record<Verdict, string> = {
   'n/a': '  --  ',
 };
 
-/** First real value of a time-aligned env_params array. */
-function firstValue(series: (number | null)[] | undefined): number | undefined {
-  if (!series) return undefined;
-  for (const v of series) {
-    // null means "unavailable upstream"; -999 is the legacy sentinel for the
-    // same thing. Neither is a measurement, and neither may become 0.
-    if (v !== null && v !== undefined && v !== -999) return v;
-  }
-  return undefined;
-}
-
 // ---------------------------------------------------------------------------
 // Main
 // ---------------------------------------------------------------------------
@@ -159,24 +162,24 @@ async function main(): Promise<number> {
   record({
     field: 'temp_c',
     contract: 'ThermalExposureEvent',
-    source: 'heatmap → stats_data.Temperature_stats.Maximum',
+    source: 'heatmap → stats_data.temperature_stats.maximum',
     verdict: typeof t.max === 'number' ? 'ok' : 'missing',
     value: t.max,
     note: typeof t.max === 'number' ? 'Max, per §8 decision 1' : undefined,
   });
 
   const statPairs: [keyof typeof t, string][] = [
-    ['mean', 'Mean'],
-    ['max', 'Maximum'],
-    ['min', 'Minimum'],
-    ['stdDev', 'Standard_deviation'],
+    ['mean', 'mean'],
+    ['max', 'maximum'],
+    ['min', 'minimum'],
+    ['stdDev', 'standard_deviation'],
   ];
   for (const [local, wire] of statPairs) {
     const key = local === 'stdDev' ? 'stddev' : local;
     record({
       field: `temp_stats.${key}`,
       contract: 'ThermalExposureEvent',
-      source: `heatmap → stats_data.Temperature_stats.${wire}`,
+      source: `heatmap → stats_data.temperature_stats.${wire}`,
       verdict: typeof t[local] === 'number' ? 'ok' : 'missing',
       value: t[local],
     });
@@ -185,7 +188,7 @@ async function main(): Promise<number> {
   record({
     field: 'forecasted_temp_c',
     contract: 'WaypointTelemetry',
-    source: 'heatmap → Temperature_stats (forecast window ≤ 12h)',
+    source: 'heatmap → temperature_stats (forecast window ≤ 12h)',
     verdict: typeof t.max === 'number' ? 'ok' : 'missing',
     value: t.max,
   });
@@ -232,7 +235,7 @@ async function main(): Promise<number> {
     process.stdout.write('\n');
 
     const loc = envJob.result?.locations?.[0];
-    humidity = firstValue(loc?.parameters?.relative_humidity_percent);
+    humidity = firstEnvParamsValue(loc?.parameters?.relative_humidity_percent);
 
     console.log(`      activity_id : ${envJob.activityId}`);
     console.log(

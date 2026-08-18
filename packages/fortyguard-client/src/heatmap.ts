@@ -20,12 +20,14 @@ export interface TemperatureSummary {
  * import the domain contracts: the client stays a pure API wrapper.
  */
 export function summarizeTemperature(result: HeatmapResult): TemperatureSummary {
-  const stats = result?.stats_data?.Temperature_stats ?? {};
+  // Field names verified against a live response, not the docs page's prose
+  // casing — see the comment on HeatmapTemperatureStats.
+  const stats = result?.stats_data?.temperature_stats ?? {};
   return {
-    min: stats.Minimum,
-    max: stats.Maximum,
-    mean: stats.Mean,
-    stdDev: stats.Standard_deviation,
+    min: stats.minimum,
+    max: stats.maximum,
+    mean: stats.mean,
+    stdDev: stats.standard_deviation,
     units: result?.stats_data?.units ?? '°C',
     tileCount: result?.map_data?.features?.length ?? 0,
   };

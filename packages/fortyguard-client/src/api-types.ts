@@ -47,6 +47,13 @@ export interface GeoJsonPolygon {
 
 export interface GeoJsonFeature<TGeometry = GeoJsonPolygon> {
   type: 'Feature';
+  /**
+   * Left untyped — a live heatmap tile carries `tile_id`,
+   * `average_temperature`, `min_temperature`, `max_temperature` (verified
+   * 2026-08-18), but nothing in this client currently reads per-tile
+   * properties; only the aggregate `stats_data` does. Type these properly if
+   * Phase 1 ingestion ever needs per-tile values.
+   */
   properties: Record<string, unknown>;
   geometry: TGeometry;
 }
@@ -104,18 +111,32 @@ export interface HeatmapRequest {
   direction?: 'above' | 'below';
 }
 
+/**
+ * Field names verified against a LIVE response (2026-08-18), not the docs
+ * page. The docs' "Result Output Fields" prose describes these with
+ * capitalized English words (Minimum, Maximum, Standard_deviation) and that
+ * casing was transcribed literally into an earlier version of this file — but
+ * the real wire payload is lowercase snake_case throughout. This cost a
+ * Phase 0 verification run: `summarizeTemperature()` read `Temperature_stats`
+ * off a payload that actually had `temperature_stats`, got `undefined` for
+ * everything, and reported "no usable temperature" even though the API had
+ * genuinely returned real data.
+ */
 export interface HeatmapTemperatureStats {
-  Minimum?: number;
-  Maximum?: number;
-  Mean?: number;
-  Standard_deviation?: number;
+  minimum?: number;
+  maximum?: number;
+  mean?: number;
+  standard_deviation?: number;
 }
 
 export interface HeatmapStatsData {
-  Temperature_stats?: HeatmapTemperatureStats;
-  Overall_temperature_distribution?: number[];
-  Normal_temperature_distribution?: { x_axis?: number[]; y_axis?: number[] };
-  Temperature_frequency?: Record<string, number>;
+  /** activity_id and n_cells are present even on an EMPTY result (0 tiles). */
+  activity_id?: string;
+  n_cells?: number;
+  temperature_stats?: HeatmapTemperatureStats;
+  overall_temperature_distribution?: number[];
+  normal_temperature_distribution?: { x_axis?: number[]; y_axis?: number[] };
+  temperature_frequency?: Record<string, number>;
   /** 'hour' for time_of_measure / exceedance / persistence. */
   units?: string;
   [key: string]: unknown;
