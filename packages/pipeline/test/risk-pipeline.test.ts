@@ -65,6 +65,7 @@ function build(readingOptions: Record<string, unknown> = {}, pipelineOptions: Bu
   const pdfStore = pipelineOptions.pdfStore ?? new InMemoryPdfStore();
   const pipeline = new RiskPipeline({
     sink,
+    org_id: 'org_test',
     routes,
     initialExposureHours: 1,
     ...pipelineOptions,
@@ -108,6 +109,7 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
     await pipeline.run(telemetry, readings);
 
     for (const entry of await sink.read()) {
+      assert.equal(entry.org_id, 'org_test', `every entry must carry the pipeline's org_id (§11)`);
       switch (entry.entry_type) {
         case 'thermal_exposure_event':
           assertValid('logged event', validateThermalExposureEvent(entry.payload));

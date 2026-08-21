@@ -1,5 +1,6 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { requireAuth } from './auth.js';
 import { registerDemoRoutes } from './routes/demo.js';
 
 /**
@@ -44,12 +45,19 @@ export async function buildServer(): Promise<FastifyInstance> {
       neon_database_url: Boolean(
         (process.env.NEON_DATABASE_URL || process.env.DATABASE_URL || '').trim(),
       ),
+      clerk_secret_key: Boolean(process.env.CLERK_SECRET_KEY?.trim()),
     };
     const ready = Object.values(checks).every(Boolean);
     return reply.code(ready ? 200 : 503).send({ ready, checks });
   });
 
   registerDemoRoutes(app);
+
+  /**
+   * Proof-of-plumbing only, mirroring apps/web's /dashboard — NOT a real
+   * product endpoint. UNVERIFIED against a live token; see auth.ts's header.
+   */
+  app.get('/api/me', { preHandler: requireAuth }, async (request) => request.auth);
 
   return app;
 }

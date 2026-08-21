@@ -9,6 +9,7 @@ import {
 import { InMemoryPdfStore, RecordingWebhookEmitter } from '@threshold/output';
 import { RiskPipeline } from '@threshold/pipeline';
 import { RouteRegistry } from '@threshold/risk-engine';
+import { DEMO_ORG_ID } from '@threshold/accounts';
 
 /**
  * Real HTTP surface for the demo pipeline (§6 Phase 5, exposed for external
@@ -64,6 +65,7 @@ async function runDemoRoute(options: {
 
   const pipeline = new RiskPipeline({
     sink,
+    org_id: DEMO_ORG_ID,
     routes,
     initialExposureHours: 1,
     decider: new HardCodedThresholdDecider(),

@@ -19,18 +19,27 @@
 -- deleted afterwards — that is the property being tested — so the runner rolls
 -- them back. Running this file straight through psql commits them for good.
 --
+-- Section 0 creates a throwaway org (Phase 7, §11): audit_log.org_id is NOT
+-- NULL as of the org-multitenancy migration, so every insert below needs one.
+-- Harmless under the rollback runner; permanent (alongside everything else)
+-- if ever run with --commit or straight through psql.
+--
 -- Every assertion below fails loudly. A clean run ends at section 11
--- (12 sections counting 1b; 7 emit an explicit PASS notice, the rest assert by
--- succeeding or by returning rows for inspection).
+-- (14 sections counting 0, 1b, and 6b; 9 emit an explicit PASS notice, the
+-- rest assert by succeeding or by returning rows for inspection).
 
 \set ON_ERROR_STOP on
 
+\echo '== 0. a test org — audit_log.org_id is NOT NULL as of Phase 7 (§11) =='
+insert into public.orgs (id, name, slug) values ('org_test_fixture', 'Test Fixture Org', 'test-fixture-org');
+
 \echo '== 1. append a ThermalExposureEvent =='
-insert into public.audit_log (entry_type, event_id, route_id, payload, occurred_at)
+insert into public.audit_log (entry_type, event_id, route_id, org_id, payload, occurred_at)
 values (
   'thermal_exposure_event',
   '11111111-1111-1111-1111-111111111111',
   'route-a',
+  'org_test_fixture',
   -- Post-decision-log §3 shape: temp_c is the AOI Max, temp_stats rides along
   -- for audit, and heat_index_c is deliberately ABSENT (§8 decision 2).
   '{"event_id":"11111111-1111-1111-1111-111111111111","route_id":"route-a","waypoint_id":"wp-1","temp_c":41.2,"temp_stats":{"mean":37.4,"max":41.2,"min":34.1,"stddev":1.8},"humidity_pct":38,"data_quality":"complete","timestamp":"2026-08-17T14:00:00Z","source":"fortyguard_api"}'::jsonb,
@@ -38,11 +47,12 @@ values (
 );
 
 \echo '== 1b. a degraded event (null humidity) is stored, never zero-filled =='
-insert into public.audit_log (entry_type, event_id, route_id, payload, occurred_at)
+insert into public.audit_log (entry_type, event_id, route_id, org_id, payload, occurred_at)
 values (
   'thermal_exposure_event',
   '22222222-2222-2222-2222-222222222222',
   'route-a',
+  'org_test_fixture',
   '{"event_id":"22222222-2222-2222-2222-222222222222","route_id":"route-a","waypoint_id":"wp-2","temp_c":39.6,"temp_stats":{"mean":36.0,"max":39.6,"min":33.2,"stddev":1.5},"humidity_pct":null,"data_quality":"degraded_no_humidity","timestamp":"2026-08-17T15:00:00Z","source":"fortyguard_api"}'::jsonb,
   now()
 );
@@ -61,18 +71,18 @@ begin
 end $$;
 
 \echo '== 2. append both evaluations for the SAME event_id =='
-insert into public.audit_log (entry_type, event_id, payload, occurred_at)
+insert into public.audit_log (entry_type, event_id, org_id, payload, occurred_at)
 values
-  ('compliance_record', '11111111-1111-1111-1111-111111111111',
+  ('compliance_record', '11111111-1111-1111-1111-111111111111', 'org_test_fixture',
    '{"record_id":"aaaa1111-1111-1111-1111-111111111111","action":"rest_break_scheduled"}'::jsonb, now()),
-  ('cargo_risk_assessment', '11111111-1111-1111-1111-111111111111',
+  ('cargo_risk_assessment', '11111111-1111-1111-1111-111111111111', 'org_test_fixture',
    '{"assessment_id":"bbbb1111-1111-1111-1111-111111111111","risk_level":"breach"}'::jsonb, now());
 
 \echo '== 3. agent_decision WITHOUT rationale must be rejected =='
 do $$
 begin
-  insert into public.audit_log (entry_type, event_id, payload)
-  values ('agent_decision', '11111111-1111-1111-1111-111111111111',
+  insert into public.audit_log (entry_type, event_id, org_id, payload)
+  values ('agent_decision', '11111111-1111-1111-1111-111111111111', 'org_test_fixture',
           '{"decision_id":"cccc1111-1111-1111-1111-111111111111"}'::jsonb);
   raise exception 'ASSERT FAILED: agent_decision without rationale was accepted';
 exception
@@ -80,10 +90,11 @@ exception
 end $$;
 
 \echo '== 4. agent_decision WITH rationale is accepted =='
-insert into public.audit_log (entry_type, event_id, payload, rationale)
+insert into public.audit_log (entry_type, event_id, org_id, payload, rationale)
 values (
   'agent_decision',
   '11111111-1111-1111-1111-111111111111',
+  'org_test_fixture',
   '{"decision_id":"cccc1111-1111-1111-1111-111111111111","action_tier":"draft","confidence":0.82}'::jsonb,
   'Heat index 47.9C exceeded the OSHA high-risk threshold while pharma cargo passed its cumulative exposure limit; drafted both a rest schedule and a claim for human review.'
 );
@@ -91,8 +102,8 @@ values (
 \echo '== 5. unknown entry_type must be rejected =='
 do $$
 begin
-  insert into public.audit_log (entry_type, event_id, payload)
-  values ('not_a_real_type', '11111111-1111-1111-1111-111111111111', '{}'::jsonb);
+  insert into public.audit_log (entry_type, event_id, org_id, payload)
+  values ('not_a_real_type', '11111111-1111-1111-1111-111111111111', 'org_test_fixture', '{}'::jsonb);
   raise exception 'ASSERT FAILED: unknown entry_type was accepted';
 exception
   when check_violation then raise notice 'PASS: entry_type is constrained';
@@ -101,17 +112,39 @@ end $$;
 \echo '== 6. non-object payload must be rejected =='
 do $$
 begin
-  insert into public.audit_log (entry_type, event_id, payload)
-  values ('thermal_exposure_event', '11111111-1111-1111-1111-111111111111', '"a string"'::jsonb);
+  insert into public.audit_log (entry_type, event_id, org_id, payload)
+  values ('thermal_exposure_event', '11111111-1111-1111-1111-111111111111', 'org_test_fixture', '"a string"'::jsonb);
   raise exception 'ASSERT FAILED: non-object payload was accepted';
 exception
   when check_violation then raise notice 'PASS: payload must be a JSON object';
 end $$;
 
+\echo '== 6b. org_id referencing an unknown org must be rejected =='
+do $$
+begin
+  insert into public.audit_log (entry_type, event_id, org_id, payload)
+  values ('thermal_exposure_event', '11111111-1111-1111-1111-111111111111', 'org_does_not_exist', '{}'::jsonb);
+  raise exception 'ASSERT FAILED: an unknown org_id was accepted';
+exception
+  when foreign_key_violation then raise notice 'PASS: audit_log.org_id foreign key enforced';
+end $$;
+
+-- Sections 7-9 target the row this suite itself inserted in section 1, by
+-- event_id, NOT a hardcoded seq value. `seq` is a Postgres IDENTITY column,
+-- and identity sequences are non-transactional by design (nextval() advances
+-- permanently even inside a rolled-back transaction) — every prior run of
+-- this suite against a long-lived database like Neon has already burned past
+-- seq=1 without ever committing a row. A hardcoded `where seq = 1` would
+-- match zero rows there, making UPDATE/DELETE silently "succeed" as a no-op
+-- and produce a false failure that looks exactly like a broken trigger but
+-- isn't one. Match on event_id, which this transaction controls, instead.
+
 \echo '== 7. UPDATE must be blocked =='
 do $$
 begin
-  update public.audit_log set route_id = 'tampered' where seq = 1;
+  update public.audit_log set route_id = 'tampered'
+  where event_id = '11111111-1111-1111-1111-111111111111'
+    and entry_type = 'thermal_exposure_event';
   raise exception 'ASSERT FAILED: UPDATE was allowed';
 exception
   when insufficient_privilege then raise notice 'PASS: UPDATE blocked by trigger';
@@ -120,7 +153,9 @@ end $$;
 \echo '== 8. DELETE must be blocked =='
 do $$
 begin
-  delete from public.audit_log where seq = 1;
+  delete from public.audit_log
+  where event_id = '11111111-1111-1111-1111-111111111111'
+    and entry_type = 'thermal_exposure_event';
   raise exception 'ASSERT FAILED: DELETE was allowed';
 exception
   when insufficient_privilege then raise notice 'PASS: DELETE blocked by trigger';

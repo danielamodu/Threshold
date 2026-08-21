@@ -10,6 +10,7 @@
   "include": ["src/**/*.ts", "test/**/*.ts", "scripts/**/*.ts"],
   "references": [
     { "path": "../../packages/types" },
+    { "path": "../../packages/accounts" },
     { "path": "../../packages/audit" },
     { "path": "../../packages/decision-layer" },
     { "path": "../../packages/fortyguard-client" },

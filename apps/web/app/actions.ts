@@ -33,6 +33,7 @@ import {
 import { InMemoryPdfStore, RecordingWebhookEmitter } from '@threshold/output';
 import { RiskPipeline } from '@threshold/pipeline';
 import { RouteRegistry } from '@threshold/risk-engine';
+import { DEMO_ORG_ID } from '@threshold/accounts';
 import { INJECTOR_WAYPOINT_ID, type DemoRunResult, type DemoWaypoint } from './demo-types';
 
 const DEMO_ROUTE: RouteSpec = {
@@ -66,6 +67,7 @@ export async function runDemoRoute(spike: boolean): Promise<DemoRunResult> {
 
   const pipeline = new RiskPipeline({
     sink,
+    org_id: DEMO_ORG_ID,
     routes,
     initialExposureHours: 1,
     decider: new HardCodedThresholdDecider(),

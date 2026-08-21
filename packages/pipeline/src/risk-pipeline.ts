@@ -34,6 +34,20 @@
  * subscriber below builds its output artifact (PDF, claim draft, mocked
  * reroute) and folds the result into the record BEFORE that record is pushed
  * anywhere or appended to the sink. Only the finished record is ever logged.
+ *
+ * ── org_id (§11 Phase 7) is a construction-time concern, not a per-event one ──
+ * `audit_log.org_id` is required, but it is NOT threaded through
+ * `RouteContextProvider`/the evaluators, and `ThermalExposureEvent` still
+ * carries no org_id (§3 stays untouched — signed off explicitly). Two orgs can
+ * share the same `route_id` string (enforced only as `unique(org_id,
+ * route_id)` at the DB level), so a lookup keyed on bare `route_id` alone is
+ * only safe when the registry itself is already scoped to one org. Every
+ * `RiskPipeline` and every `RouteRegistry`/`PostgresRouteRegistry` is already
+ * constructed fresh per run in this codebase (one demo request, one seeded
+ * org) — so `org_id` is a constructor argument here, exactly once, and every
+ * audit write in this file uses that single value. This keeps
+ * `RouteContextProvider` and both evaluators exactly as they were: pure, and
+ * unaware multi-tenancy exists.
  */
 
 import { randomUUID } from 'node:crypto';
@@ -57,14 +71,17 @@ import {
   CargoRiskEvaluator,
   EventBus,
   HumanComplianceEvaluator,
-  RouteRegistry,
   type CargoEvaluation,
   type ComplianceEvaluation,
+  type RouteContextProvider,
 } from '@threshold/risk-engine';
 
 export interface PipelineOptions {
   sink: AuditSink;
-  routes: RouteRegistry;
+  /** Every audit write this pipeline makes is stamped with this org (§11 Phase 7). */
+  org_id: string;
+  /** RouteRegistry (in-memory) or PostgresRouteRegistry (@threshold/accounts) — either satisfies this. */
+  routes: RouteContextProvider;
   /** Minutes of the scheduling window handed to the compliance evaluator. */
   windowMinutes?: number;
   /** Hours charged to the first event on a route. See CargoRiskEvaluator. */
@@ -113,6 +130,7 @@ export class RiskPipeline {
   readonly decider: HardCodedThresholdDecider | null;
   readonly pdfStore: PdfStore;
   readonly webhookEmitter: WebhookEmitter | null;
+  readonly org_id: string;
 
   private readonly sink: AuditSink;
   private readonly newId: () => string;
@@ -123,6 +141,7 @@ export class RiskPipeline {
 
   constructor(options: PipelineOptions) {
     this.sink = options.sink;
+    this.org_id = options.org_id;
     this.newId = options.newId ?? randomUUID;
     this.decider =
       options.decider === null ? null : (options.decider ?? new HardCodedThresholdDecider());
@@ -161,6 +180,7 @@ export class RiskPipeline {
         entry_type: 'compliance_record',
         event_id: event.event_id,
         route_id: event.route_id,
+        org_id: this.org_id,
         payload: finalRecord,
         occurred_at: finalRecord.generated_at,
       });
@@ -196,6 +216,7 @@ export class RiskPipeline {
         entry_type: 'cargo_risk_assessment',
         event_id: event.event_id,
         route_id: event.route_id,
+        org_id: this.org_id,
         payload: finalAssessment,
         occurred_at: event.timestamp,
       });
@@ -212,6 +233,7 @@ export class RiskPipeline {
       entry_type: 'thermal_exposure_event',
       event_id: event.event_id,
       route_id: event.route_id,
+      org_id: this.org_id,
       payload: event,
       occurred_at: event.timestamp,
     });
@@ -242,6 +264,7 @@ export class RiskPipeline {
       entry_type: 'agent_decision',
       event_id: event.event_id,
       route_id: event.route_id,
+      org_id: this.org_id,
       payload: decision,
       rationale: decision.rationale,
       occurred_at: decision.timestamp,

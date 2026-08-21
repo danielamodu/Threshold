@@ -1,0 +1,36 @@
+{
+  "name": "@threshold/accounts",
+  "version": "0.0.0",
+  "private": true,
+  "description": "Accounts & Multi-tenancy (§11 Phase 7) — orgs/drivers/routes persistence, role permissions",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist"
+  ],
+  "scripts": {
+    "build": "tsc -b",
+    "typecheck": "tsc -p tsconfig.check.json",
+    "test": "node --import tsx --test \"test/**/*.test.ts\"",
+    "seed": "tsx scripts/seed-demo-org.ts",
+    "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
+  },
+  "dependencies": {
+    "@threshold/risk-engine": "*",
+    "@threshold/types": "*",
+    "pg": "^8.13.1"
+  },
+  "devDependencies": {
+    "@types/pg": "^8.11.10",
+    "dotenv": "^16.4.5",
+    "tsx": "^4.19.1",
+    "typescript": "^5.6.3"
+  }
+}

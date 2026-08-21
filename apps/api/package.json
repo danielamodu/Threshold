@@ -13,10 +13,13 @@
     "typecheck": "tsc -p tsconfig.check.json",
     "simulate": "tsx scripts/simulate.ts",
     "simulate:real": "tsx scripts/real-ingest.ts",
+    "verify:org-scoped": "tsx scripts/verify-org-scoped.ts",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {
+    "@clerk/backend": "^3.16.10",
     "@fastify/cors": "^10.0.1",
+    "@threshold/accounts": "*",
     "@threshold/audit": "*",
     "@threshold/decision-layer": "*",
     "@threshold/fortyguard-client": "*",

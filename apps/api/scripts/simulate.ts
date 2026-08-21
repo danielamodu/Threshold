@@ -42,6 +42,7 @@ import {
 } from '@threshold/output';
 import { RiskPipeline } from '@threshold/pipeline';
 import { RouteRegistry } from '@threshold/risk-engine';
+import { DEMO_ORG_ID } from '@threshold/accounts';
 
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
@@ -87,6 +88,10 @@ async function main(): Promise<number> {
   let sink: AuditSink;
   if (persistUrl) {
     console.log('!! PERSISTING to a real database. Entries can never be deleted.');
+    console.log(
+      `!! audit_log.org_id has a foreign key to orgs(${DEMO_ORG_ID}) — run ` +
+        `\`npm run seed --workspace @threshold/accounts\` against this same database first.`,
+    );
     sink = new PostgresAuditSink({ connectionString: persistUrl });
   } else {
     sink = new InMemoryAuditSink();
@@ -105,6 +110,7 @@ async function main(): Promise<number> {
 
   const pipeline = new RiskPipeline({
     sink,
+    org_id: DEMO_ORG_ID,
     routes,
     initialExposureHours: 1,
     decider: new HardCodedThresholdDecider({ allowAutoExecute }),

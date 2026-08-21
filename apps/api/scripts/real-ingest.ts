@@ -31,6 +31,7 @@ import {
 import { RiskPipeline } from '@threshold/pipeline';
 import { RouteRegistry } from '@threshold/risk-engine';
 import { assertValid, validateThermalExposureEvent } from '@threshold/types';
+import { DEMO_ORG_ID } from '@threshold/accounts';
 
 loadDotenv({ path: resolve(import.meta.dirname, '../../../.env') });
 
@@ -85,7 +86,7 @@ async function main(): Promise<number> {
     driver_id: ROUTE.driver_id,
     cargo_class: ROUTE.cargo_class,
   });
-  const pipeline = new RiskPipeline({ sink, routes, initialExposureHours: 1 });
+  const pipeline = new RiskPipeline({ sink, org_id: DEMO_ORG_ID, routes, initialExposureHours: 1 });
 
   const startedAt = Date.now();
   const { events, compliance, cargo, decisions } = await pipeline.run(telemetry, readings);

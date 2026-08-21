@@ -16,6 +16,7 @@
  *   npm run db:test
  *   npm run db:test -- --url postgresql://...
  *   npm run db:test -- --commit        # leaves fixtures behind, permanently
+ *   npm run db:test -- --suite org_multitenancy_test
  */
 
 import { readFileSync } from 'node:fs';
@@ -26,13 +27,12 @@ import { Client } from 'pg';
 const REPO_ROOT = resolve(import.meta.dirname, '..');
 loadDotenv({ path: resolve(REPO_ROOT, '.env') });
 
-const SUITE = resolve(import.meta.dirname, 'tests/audit_log_test.sql');
-
 function arg(name: string): string | undefined {
   const i = process.argv.indexOf(`--${name}`);
   return i === -1 ? undefined : process.argv[i + 1];
 }
 const commit = process.argv.includes('--commit');
+const SUITE = resolve(import.meta.dirname, `tests/${arg('suite') ?? 'audit_log_test'}.sql`);
 
 function resolveConnectionString(): string {
   const url = arg('url') ?? process.env.NEON_DATABASE_URL ?? process.env.DATABASE_URL;

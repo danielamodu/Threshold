@@ -12,7 +12,7 @@
   },
   "scripts": {
     "build": "npm run build --workspaces --if-present",
-    "build:packages": "npm run build --workspace @threshold/pipeline",
+    "build:packages": "npm run build --workspace @threshold/pipeline --workspace @threshold/accounts",
     "test": "npm run test --workspaces --if-present",
     "typecheck": "npm run typecheck --workspaces --if-present && npm run typecheck:db",
     "typecheck:db": "tsc -p db/tsconfig.json",

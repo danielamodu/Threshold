@@ -1,0 +1,112 @@
+/**
+ * Clerk session verification for the Fastify backend (§11 Phase 7).
+ *
+ * Next.js has clerkMiddleware() for this; Fastify needs the lower-level
+ * verifyToken() primitive from @clerk/backend directly. Verifies the JWT in
+ * the `Authorization: Bearer <token>` header against CLERK_SECRET_KEY and
+ * decorates `request.auth` with the decoded identity — userId, the active
+ * org, and that org's role mapped onto our own Role type.
+ *
+ * UNVERIFIED against a live token: Organizations is disabled on this Clerk
+ * instance (confirmed via a real API call returning
+ * organization_not_enabled_in_instance), so no real session carrying an
+ * org/orgRole claim has ever been minted to test this against. `org_id` and
+ * `org_role` ARE genuinely declared, current fields on `@clerk/shared`'s
+ * `JwtPayload` type (checked directly against the installed package, not
+ * assumed) — that part is solid.
+ *
+ * `verifyToken`'s own doc comment shows a try/catch, throw-on-failure usage
+ * example, which looked contradicted by a discriminated `{ data } | { errors
+ * }` return type seen while chasing a typecheck failure here — but that
+ * union type belongs to a different declaration, on the deep
+ * `@clerk/backend/dist/tokens/verify.d.ts` path. The root package export
+ * (`import { verifyToken } from '@clerk/backend'`, what this file actually
+ * uses) resolves to `dist/index.d.ts`'s own declaration instead:
+ * `Promise<NonNullable<JwtPayload | undefined>>` — i.e. throw-on-failure,
+ * matching the doc example exactly. Confirmed by reading dist/index.d.ts
+ * directly rather than assuming the deep-path type applied here.
+ *
+ * Deliberately NOT applied to /health, /ready, /api/route, or /api/simulate —
+ * those stay public so the hackathon demo and Manus's skeleton keep working
+ * unauthenticated. Use `requireAuth` as a preHandler on new, real product
+ * routes only.
+ */
+
+import type { FastifyReply, FastifyRequest } from 'fastify';
+import { verifyToken } from '@clerk/backend';
+import { roleFromClerk, type Role } from '@threshold/accounts';
+
+export interface ThresholdAuth {
+  userId: string;
+  orgId: string | null;
+  role: Role | null;
+}
+
+declare module 'fastify' {
+  interface FastifyRequest {
+    auth?: ThresholdAuth;
+  }
+}
+
+export class MissingAuthorizationError extends Error {
+  constructor() {
+    super('Missing or malformed Authorization header — expected "Bearer <clerk-session-token>".');
+    this.name = 'MissingAuthorizationError';
+  }
+}
+
+function extractBearerToken(request: FastifyRequest): string {
+  const header = request.headers.authorization;
+  if (!header?.startsWith('Bearer ')) throw new MissingAuthorizationError();
+  return header.slice('Bearer '.length).trim();
+}
+
+/**
+ * Fastify preHandler. Verifies the token, populates request.auth, and lets
+ * the route continue. A role that doesn't map (e.g. Clerk's default
+ * `org:member`, or a custom role not yet wired into clerk-roles.ts) is
+ * carried through as `role: null` rather than rejecting the request outright
+ * — route handlers decide whether an unmapped role is acceptable for them.
+ */
+export async function requireAuth(request: FastifyRequest, reply: FastifyReply): Promise<void> {
+  const secretKey = process.env.CLERK_SECRET_KEY;
+  if (!secretKey) {
+    reply.code(500).send({ error: 'CLERK_SECRET_KEY is not configured on this server.' });
+    return;
+  }
+
+  let token: string;
+  try {
+    token = extractBearerToken(request);
+  } catch {
+    reply.code(401).send({ error: 'Missing or malformed Authorization header.' });
+    return;
+  }
+
+  try {
+    // The @clerk/backend root export's verifyToken throws on an invalid or
+    // expired token (Promise<JwtPayload>, not a { data }/{ errors } result —
+    // see the header comment) — the outer catch below is the failure path.
+    const claims = await verifyToken(token, { secretKey });
+
+    let role: Role | null = null;
+    if (claims.org_role) {
+      try {
+        role = roleFromClerk(claims.org_role);
+      } catch {
+        role = null; // unrecognized role — let the route decide, don't 500 here
+      }
+    }
+
+    request.auth = {
+      userId: claims.sub,
+      orgId: claims.org_id ?? null,
+      role,
+    };
+  } catch (error) {
+    reply.code(401).send({
+      error: 'Invalid or expired session token.',
+      detail: error instanceof Error ? error.message : String(error),
+    });
+  }
+}

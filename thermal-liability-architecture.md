@@ -5,6 +5,15 @@
 
 ## 1. Core Insight (keep this on the first demo slide)
 
+> 🔴 **ACTIVE UNRESOLVED RISK — check before reading further.** Phase 0 found that
+> live/forecast FortyGuard data returns zero tiles on the current key, across 10
+> time offsets and two cities — only historical archive data works. This directly
+> threatens the core mechanic below (pre-fetching temperature ahead of a truck's
+> arrival). Confirm this is a wrong-credential issue (public trial vs
+> hackathon-issued key) and escalate to FortyGuard organizers if not. See full
+> finding and evidence in §8. Do not assume this is resolved until it's confirmed
+> in writing from FortyGuard or by a clean live-window test.
+
 Every temperature-controlled freight route has two liability surfaces exposed to the
 *same* heat event: the **driver** (heat illness, OSHA) and the **cargo** (spoilage,
 pharma cold-chain). Today these are two disconnected tools solved by two disconnected
@@ -43,18 +52,38 @@ from a single FortyGuard-fed event, in one pass.
   generates work/rest schedule, flags threshold breaches.
 - **Cargo Risk Evaluator** — cumulative exposure score against a per-cargo-class
   spoilage curve (pharma / produce / general reefer configs), flags breach + severity.
+  **Ceilings are ambient-temperature thresholds** representing the outside
+  temperature above which a reefer unit's cooling margin is gone — **not** cargo
+  storage set points, since FortyGuard returns street-level ambient, not an
+  in-trailer probe reading. See approved curve table in §8 decision log.
 
 Both evaluators consume the *same* event. This is the architectural expression of the
 core insight — don't let an implementer accidentally fork the pipeline.
 
 ### Agent Decision Layer
-- Orchestrator agent reads both evaluator outputs, decides action tier by confidence:
-  **alert-only → draft (human reviews) → auto-execute**. Every decision writes a
-  rationale string to the audit log — this is what makes the output defensible as
-  actual liability documentation, not just a notification.
-- This is your Agentic AI track and NVIDIA/GCP sponsor-fit lever. If you're tight on
-  time, this layer degrades gracefully to hard-coded thresholds without breaking the
-  rest of the system — build it last, cut it first if you have to.
+- **Final decision: deterministic, no LLM.** `HardCodedThresholdDecider` is the
+  shipped decision layer, not a stand-in for a future model. Reasoning: an LLM
+  would add hallucination risk to a liability document's core output for zero
+  capability gain over what the deterministic rule already does well — classify
+  a single event's severity and explain why, from two already-audited fields.
+  "A deterministic rule computed this" is a stronger answer under challenge than
+  "an LLM decided this." This is the pitch's differentiator against other
+  Agentic-AI-track entries running unreliable LLM wrappers, even though it costs
+  direct fit with that track — Insurance/Governance was always the primary
+  angle.
+- Confidence is **agreement between the two evaluators**, not a model score:
+  concordant severities → 0.9, one rank apart → 0.7, opposite/split → 0.5 with
+  an explicit split flag. `auto_execute` defaults off and only fires when both
+  evaluators independently hit their worst band even when enabled — one severe
+  signal alone still caps at `draft`.
+- Every decision writes a rationale string to the audit log — this is what makes
+  the output defensible as actual liability documentation, not just a
+  notification.
+- **Known, accepted limitation:** reasons about a single event in isolation, no
+  memory across a driver's route or week — a real gap (e.g. repeated moderate,
+  non-breaching exposures compounding into real fatigue risk) that's out of
+  scope for this build. Worth naming honestly if a judge asks what's next,
+  not hiding.
 
 ### Output / Integration Layer
 - **Compliance Record** — timestamped, exportable (PDF), audit-grade. This is the
@@ -77,6 +106,13 @@ core insight — don't let an implementer accidentally fork the pipeline.
 - Live route map, a **heat-spike injector** button (this is your demo's entire
   interaction model — one click, watch both modules resolve), and an event timeline
   showing the fork: one event → two liability responses, timestamped side by side.
+  **Deviation from §4, approved:** built as raw SVG waypoint projection, not
+  Mapbox/Leaflet — removes a token/network dependency that could fail live during
+  judging. Runs in-process inside Next.js rather than calling the separate Fastify
+  API server, so judging doesn't depend on two servers both staying up. Map and
+  timeline are verified (via DOM inspection, not just visual check) to read from
+  the exact same severity computation the decision layer uses — they cannot
+  silently disagree.
 
 ---
 
@@ -153,7 +189,7 @@ core insight — don't let an implementer accidentally fork the pipeline.
 
 | Layer | Choice | Why |
 |---|---|---|
-| Frontend | Next.js + Mapbox/Leaflet | Fast to ship, live map is the demo's visual anchor |
+| Frontend | Next.js, raw SVG route projection (not Mapbox/Leaflet — see §2, dropped to remove a token/network dependency that could fail live during judging) | Fast to ship, live map is the demo's visual anchor |
 | Backend | Node/TS, Fastify | Matches your usual stack, fast iteration with your orchestrator model |
 | Event bus | In-process emitter for demo scale; note upgrade path to Redis pub/sub in the README (shows you understand production scale without over-building it) |
 | DB | Postgres (Neon) | Serverless Postgres, connection-string simple — no CLI/binary-download friction like Supabase's postinstall caused in Phase 0. Only using plain Postgres here (no auth/storage/realtime), so Neon's narrower surface is a better fit than Supabase's broader one. |
@@ -312,6 +348,43 @@ Phase 0 came back with four real mismatches against the assumptions above. Resol
    (`/heatmap` → `/env_params`), not one — reflected in the Ingestion Layer note
    above. This roughly doubles per-waypoint latency; the Phase 1 pre-fetch queue
    needs to budget for both jobs in sequence, not one.
+5. **Spoilage curves approved (Phase 2)** — ambient-ceiling degree-hours model,
+   not Mean Kinetic Temperature (flagged as the real upgrade path if this ever
+   goes near an actual insurer):
+
+   | Class | Ambient ceiling | Elevated | Breach |
+   |---|---|---|---|
+   | pharma | 30°C | 4 °C·h | 12 °C·h |
+   | produce | 34°C | 10 °C·h | 30 °C·h |
+   | general_reefer | 38°C | 20 °C·h | 50 °C·h |
+
+   Ceilings represent ambient temperature above which the reefer unit's cooling
+   margin is gone, not a cargo storage set point — this corrects an earlier bug
+   where outdoor ambient was compared directly against pharma's 2–8°C storage
+   range, causing false breaches on ordinary afternoons. Stated plainly as a proxy,
+   not a measurement, in both code and pitch.
+6. **Heat-index formula domain-clamped.** NWS Rothfusz is only validated to
+   ~44.4°C/112°F; readings above that clamp to the ceiling value and set
+   `extrapolated: true` rather than returning a physically meaningless
+   extrapolated number. This protects the compliance record's defensibility —
+   a fabricated precise figure outside the formula's validated range is worse
+   than an honestly-flagged floor.
+7. **🔴 UNRESOLVED — live/forecast data returns zero tiles on the current key.**
+   Phase 0's real end-to-end call succeeded (auth, both chained jobs, correct
+   parsing after fixing a docs-vs-reality casing bug: actual JSON is lowercase
+   snake_case — `temperature_stats.maximum` etc. — not the capitalized prose
+   FortyGuard's docs page used). But every query in the ±12h live/forecast window
+   returned `error: false, status_code: 200, n_cells: 0` — tested across 10 time
+   offsets and two cities (NYC, Miami) to rule out a coverage gap. Only
+   FortyGuard's own documented historical example date (2024-07-15) returned real
+   data (299 tiles). This pattern reads as a trial-key restriction on live/
+   forecast access, not a bug in the client. **Action required: confirm whether
+   this key came from the hackathon's participant access instructions or the
+   public self-serve trial — escalate to FortyGuard organizers directly if it's
+   already the hackathon key.** Until resolved, Phase 1+ proceeds using the
+   confirmed-working historical window as the data source, but the demo's
+   framing (genuinely live/forecast vs. historical replay) cannot be finalized
+   until this closes.
 
 `ThermalExposureEvent` and `ComplianceRecord` in §3 have been updated to reflect
 all four resolutions.
@@ -497,9 +570,42 @@ Report back with the deploy URLs, backup video location, and README once done.
 
 ## 10. Open Decisions (your call)
 
-- Whether the agent layer ships as auto-execute-capable or stays alert/draft-only for
-  the demo (auto-execute is a stronger demo moment but a bigger liability claim to
-  defend under judge questioning — your call, not a scope-down suggestion either way)
-- Real routing API integration vs. mocked reroute suggestion
-- Which LLM API powers the Phase 3 agent layer (Claude vs Gemini — Gemini has the
-  cleaner GCP-sponsor-fit story if that matters to you for judging)
+- Real routing API integration vs. mocked reroute suggestion (currently mocked,
+  labeled `mocked: true` — revisit only if time allows, not required)
+- ~~Whether the agent layer ships as auto-execute-capable~~ — resolved: capped,
+  requires explicit flag + both evaluators at worst band
+- ~~Which LLM API powers the agent layer~~ — resolved: no LLM, deterministic
+  decider is final (see §2)
+
+## 11. Product Build Roadmap (post-hackathon — full product, not demo-only)
+
+The hackathon build (Phases 0–6) is the real backend core of an actual product, not
+a throwaway demo — this roadmap extends it, doesn't replace it. The Aug 30
+submission is whatever state this is honestly in on that date, not a separate
+branch built to look finished.
+
+**Sequenced by real dependency**, not preference:
+
+- **Phase 7 — Accounts & Multi-tenancy.** Real auth, org model, role-based access
+  (dispatcher / compliance officer / driver see different things). This blocks
+  almost everything below — route management, telemetry, billing all need to be
+  scoped to an org.
+- **Phase 8 — Real Telemetry Ingestion.** Implement the TMS adapter concretely
+  against a real provider (Samsara/Motive-shaped), replacing the synthetic
+  simulator as the live data source. This is what makes "plug-and-play" literally
+  true instead of a claim.
+- **Phase 9 — Cargo Valuation + Real Claims.** Real valuation data source so claim
+  drafts stop flagging dollar value as null. Without this, the claim module is
+  structurally correct but financially inert.
+- **Phase 10 — Real Routing Integration.** Replace the mocked reroute suggestion
+  with an actual routing provider call.
+- **Phase 11 — Security Hardening for Real Customer Data.** Proper secrets
+  management, rate limiting, Postgres RLS, moving off the single-key setup that's
+  fine for a hackathon and not fine for real fleet data.
+- **Phase 12 — Billing, Onboarding, Ops/Monitoring.** The standard SaaS layer this
+  currently has none of.
+- **Ongoing, parallel, not a build task:** legal review of the compliance-record
+  and claim-draft language before any real customer relies on this for actual
+  OSHA documentation or actual insurance claims. Not caution for its own sake —
+  software-generated liability documents are exactly the category that gets
+  challenged, and that's a lawyer's review, not an engineering one.

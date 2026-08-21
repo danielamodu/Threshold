@@ -60,13 +60,14 @@ export class PostgresAuditSink implements AuditSink {
       recorded_at: Date;
     }>(
       `insert into public.audit_log
-         (entry_type, event_id, route_id, payload, rationale, occurred_at)
-       values ($1, $2, $3, $4::jsonb, $5, $6)
+         (entry_type, event_id, route_id, org_id, payload, rationale, occurred_at)
+       values ($1, $2, $3, $4, $5::jsonb, $6, $7)
        returning seq::text, entry_id, recorded_at`,
       [
         entry.entry_type,
         entry.event_id,
         entry.route_id ?? null,
+        entry.org_id,
         JSON.stringify(entry.payload),
         entry.rationale ?? null,
         entry.occurred_at ?? null,
@@ -95,12 +96,13 @@ export class PostgresAuditSink implements AuditSink {
       entry_type: AuditLogInsert['entry_type'];
       event_id: string;
       route_id: string | null;
+      org_id: string;
       payload: unknown;
       rationale: string | null;
       occurred_at: Date | null;
       recorded_at: Date;
     }>(
-      `select seq::text, entry_id, entry_type, event_id, route_id, payload,
+      `select seq::text, entry_id, entry_type, event_id, route_id, org_id, payload,
               rationale, occurred_at, recorded_at
        from public.audit_log
        order by seq`,
@@ -114,6 +116,7 @@ export class PostgresAuditSink implements AuditSink {
           entry_type: r.entry_type,
           event_id: r.event_id,
           route_id: r.route_id,
+          org_id: r.org_id,
           payload: r.payload,
           rationale: r.rationale,
           occurred_at: r.occurred_at ? r.occurred_at.toISOString() : null,

@@ -40,6 +40,13 @@ export type AuditLogEntry = AuditPayload & {
   /** Correlation key. Every §3 contract carries an `event_id`. */
   event_id: UUID;
   route_id: string | null;
+  /**
+   * Envelope column added by Phase 7's org-multitenancy migration (§11) —
+   * never inside any §3 payload, same reasoning as `route_id`. Required, not
+   * nullable: the database column is NOT NULL with no legacy rows to
+   * reconcile (verified empty before that migration was written).
+   */
+  org_id: string;
   /** Human-readable justification. Required for `agent_decision` (§2). */
   rationale: string | null;
   /** The contract's own timestamp / generated_at. */
@@ -52,6 +59,8 @@ export type AuditLogEntry = AuditPayload & {
 export type AuditLogInsert = AuditPayload & {
   event_id: UUID;
   route_id?: string | null;
+  /** Required — see AuditLogEntry.org_id. Not optional: the DB rejects a missing one anyway. */
+  org_id: string;
   rationale?: string | null;
   occurred_at?: ISO8601 | null;
 };

@@ -8,6 +8,7 @@
   "include": ["src/**/*.ts"],
   "references": [
     { "path": "../../packages/types" },
+    { "path": "../../packages/accounts" },
     { "path": "../../packages/audit" },
     { "path": "../../packages/decision-layer" },
     { "path": "../../packages/fortyguard-client" },
