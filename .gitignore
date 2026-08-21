@@ -13,6 +13,13 @@ out/
 # Phase 0 verification captures may contain raw API payloads
 artifacts/
 
+# Deploy secrets — SSH private keys, never committed
+.deploy/
+*.pem
+
+# Vercel project link (project/org IDs, no secrets, but not meant to be shared)
+.vercel/
+
 # Supabase local state
 supabase/.branches/
 supabase/.temp/

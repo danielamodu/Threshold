@@ -1,39 +1,55 @@
-# Deploy — Phase 0 skeletons
+# Deploy — Phase 6 (final)
 
-Both targets are stubs. They exist so there is a real deploy path before Phase 1,
-not because anything meaningful is being served yet.
+**Live:** https://web-ivory-five-41.vercel.app (frontend) · http://44.201.16.48:8080 (backend)
 
 ---
 
 ## Frontend → Vercel
 
-`apps/web/vercel.json` is committed. In the Vercel project settings:
-
-| Setting | Value |
-|---|---|
-| Root Directory | `apps/web` |
-| Include files outside root directory | **enabled** (the workspace packages live above it) |
-| Framework preset | Next.js |
-| Node version | 22.x |
-
-Install and build commands come from `vercel.json` — they step up to the repo root
-so `@threshold/types` is built before `next build` runs.
+`vercel.json` lives at the **repo root**, not inside `apps/web`. That matters:
+deploying `vercel` from inside `apps/web` only uploads that subdirectory —
+Vercel never sees `packages/*` or the root `package-lock.json`, so any
+`installCommand` that tries `cd ../.. && npm install` fails (`npm error
+Tracker "idealTree" already exists` was the actual error hit here, a
+downstream symptom of the missing files, not a real npm bug). Always deploy
+from the repo root:
 
 ```bash
-npx vercel link
+npx vercel link      # links to the existing project if not already linked
 npx vercel --prod
 ```
 
-No environment variables are needed by the web app in Phase 0. Do not add
-`FORTYGUARD_API_KEY` to Vercel — the key belongs to the backend only, and
-anything prefixed `NEXT_PUBLIC_` is shipped to the browser.
+Root `vercel.json`:
+
+```json
+{
+  "framework": "nextjs",
+  "installCommand": "npm install",
+  "buildCommand": "npm run build:packages && npm run build --workspace @threshold/web",
+  "outputDirectory": "apps/web/.next"
+}
+```
+
+`npm run build:packages` builds `@threshold/pipeline`, which — via TypeScript
+project references — transitively builds every package it depends on (all 8),
+in the correct order, from a single command. No env vars are needed by the
+web app: it runs the pipeline in-process with synthetic data (see
+`apps/web/app/actions.ts`), and never touches `FORTYGUARD_API_KEY`. Do not add
+that key to Vercel — anything not prefixed `NEXT_PUBLIC_` still shouldn't be
+handed to a service that has no reason to hold it, and this one has none.
 
 ---
 
 ## Backend → EC2 + PM2
 
-Assumes Amazon Linux 2023 or Ubuntu 22.04+, Node 22, and the repo at
-`/opt/threshold`.
+**Live instance:** `i-0d46d46792af33019`, us-east-1, t3.micro (free-tier
+eligible — no other project reuses it), Ubuntu 22.04, public IP
+`44.201.16.48`. Security group `threshold-sg` (`sg-0177ca60c586ccc65`) opens
+22 (SSH), 80 (reserved, unused), and 8080 (the API) to `0.0.0.0/0`. Key pair
+`threshold`, private key kept at `.deploy/threshold.pem` — gitignored, never
+committed.
+
+Assumes Ubuntu 22.04+, Node 22, and the repo at `/opt/threshold`.
 
 ### One-time host setup
 
