@@ -1,5 +1,6 @@
 import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
+import { registerDemoRoutes } from './routes/demo.js';
 
 /**
  * Phase 0 scope: a deployable skeleton with liveness/readiness only.
@@ -47,6 +48,8 @@ export async function buildServer(): Promise<FastifyInstance> {
     const ready = Object.values(checks).every(Boolean);
     return reply.code(ready ? 200 : 503).send({ ready, checks });
   });
+
+  registerDemoRoutes(app);
 
   return app;
 }
