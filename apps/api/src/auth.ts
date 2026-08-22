@@ -7,13 +7,15 @@
  * decorates `request.auth` with the decoded identity — userId, the active
  * org, and that org's role mapped onto our own Role type.
  *
- * UNVERIFIED against a live token: Organizations is disabled on this Clerk
- * instance (confirmed via a real API call returning
- * organization_not_enabled_in_instance), so no real session carrying an
- * org/orgRole claim has ever been minted to test this against. `org_id` and
- * `org_role` ARE genuinely declared, current fields on `@clerk/shared`'s
- * `JwtPayload` type (checked directly against the installed package, not
- * assumed) — that part is solid.
+ * VERIFIED against a live token (Organizations enabled, a real account
+ * signed up, real org auto-created, real org:admin role) — with one real bug
+ * caught and fixed in the process: session token claims are versioned
+ * (`JwtPayload`'s `v` field). This instance's actual default is v2, which
+ * nests org info under `o: { id, rol }` instead of the deprecated flat
+ * `org_id`/`org_role` claims (typed `never` on the v2 branch) — a first pass
+ * reading only the flat claims verified the token fine but always returned
+ * orgId/role as null. `@clerk/nextjs`'s `auth()` normalizes both shapes
+ * internally; this file now checks `claims.v === 2` and reads both.
  *
  * `verifyToken`'s own doc comment shows a try/catch, throw-on-failure usage
  * example, which looked contradicted by a discriminated `{ data } | { errors
@@ -87,12 +89,38 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
     // The @clerk/backend root export's verifyToken throws on an invalid or
     // expired token (Promise<JwtPayload>, not a { data }/{ errors } result —
     // see the header comment) — the outer catch below is the failure path.
-    const claims = await verifyToken(token, { secretKey });
+    //
+    // clockSkewInMs: the default is 5s, which real client clocks can and do
+    // exceed (verified live — a ~15s-slow dev machine's token was rejected
+    // with "iat is in the future" against the default). Clerk's own
+    // authenticateRequest() (what @clerk/nextjs's auth() uses) papers over
+    // this with an internal retry at a 24h tolerance — appropriate for a
+    // dev-experience fallback, not for a security boundary we control
+    // directly. 30s absorbs realistic unsynced-clock drift without opening
+    // a window anywhere near that wide.
+    const claims = await verifyToken(token, { secretKey, clockSkewInMs: 30_000 });
+
+    // Session token claims are versioned (JwtPayload's `v` field). v2 (this
+    // instance's actual default, confirmed against a real live token — the
+    // v1 org_id/org_role read alone came back null even from a fresh,
+    // successfully-verified token) nests org info under `o: { id, rol }`
+    // instead of flat org_id/org_role, which are typed `never` on that
+    // branch. `claims.v === 2` narrows the union so both shapes are handled.
+    //
+    // o.rol is also missing the `org:` prefix that org_role (and
+    // @clerk/nextjs's auth().orgRole) always carries — confirmed by decoding
+    // a real live token: o.rol came back as the bare 'admin', not 'org:admin',
+    // and clerk-roles.ts's map only recognizes the prefixed form. v2 clearly
+    // strips the constant "org:" prefix to shrink the compact token; it's
+    // reconstructed here rather than duplicating clerk-roles.ts's map twice.
+    const orgId = claims.v === 2 ? (claims.o?.id ?? null) : (claims.org_id ?? null);
+    const rawOrgRole =
+      claims.v === 2 ? (claims.o?.rol ? `org:${claims.o.rol}` : undefined) : claims.org_role;
 
     let role: Role | null = null;
-    if (claims.org_role) {
+    if (rawOrgRole) {
       try {
-        role = roleFromClerk(claims.org_role);
+        role = roleFromClerk(rawOrgRole);
       } catch {
         role = null; // unrecognized role — let the route decide, don't 500 here
       }
@@ -100,7 +128,7 @@ export async function requireAuth(request: FastifyRequest, reply: FastifyReply):
 
     request.auth = {
       userId: claims.sub,
-      orgId: claims.org_id ?? null,
+      orgId,
       role,
     };
   } catch (error) {
