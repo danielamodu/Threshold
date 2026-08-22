@@ -2,6 +2,7 @@ import cors from '@fastify/cors';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
 import { registerDemoRoutes } from './routes/demo.js';
+import { registerRouteRoutes } from './routes/routes.js';
 
 /**
  * Phase 0 scope: a deployable skeleton with liveness/readiness only.
@@ -55,9 +56,18 @@ export async function buildServer(): Promise<FastifyInstance> {
 
   /**
    * Proof-of-plumbing only, mirroring apps/web's /dashboard — NOT a real
-   * product endpoint. UNVERIFIED against a live token; see auth.ts's header.
+   * product endpoint. Verified end to end against a live Clerk session; see
+   * auth.ts's header for what that testing actually covered.
    */
   app.get('/api/me', { preHandler: requireAuth }, async (request) => request.auth);
+
+  // Real, org-scoped, role-gated route CRUD — only mounted when a database is
+  // actually configured, so buildServer() (used directly by tests with no DB
+  // env set) doesn't fail just for existing.
+  const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL;
+  if (connectionString) {
+    registerRouteRoutes(app, { connectionString });
+  }
 
   return app;
 }
