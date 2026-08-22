@@ -7,5 +7,9 @@
     "types": ["node"]
   },
   "include": ["src/**/*.ts"],
-  "references": [{ "path": "../types" }, { "path": "../fortyguard-client" }]
+  "references": [
+    { "path": "../types" },
+    { "path": "../fortyguard-client" },
+    { "path": "../motive-client" }
+  ]
 }

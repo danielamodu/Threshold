@@ -1,0 +1,12 @@
+{
+  // Typecheck-only project: covers src *and* scripts/. The build tsconfig keeps
+  // rootDir at src so the verification harness stays out of dist/.
+  "extends": "../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "composite": false,
+    "declaration": false,
+    "declarationMap": false
+  },
+  "include": ["src/**/*.ts", "scripts/**/*.ts", "test/**/*.ts"]
+}
