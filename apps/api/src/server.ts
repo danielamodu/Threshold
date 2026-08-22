@@ -1,6 +1,10 @@
+import { mkdirSync } from 'node:fs';
+import { resolve } from 'node:path';
 import cors from '@fastify/cors';
+import fastifyStatic from '@fastify/static';
 import Fastify, { type FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
+import { registerAuditRoutes } from './routes/audit.js';
 import { registerDemoRoutes } from './routes/demo.js';
 import { registerRouteRoutes } from './routes/routes.js';
 
@@ -67,7 +71,21 @@ export async function buildServer(): Promise<FastifyInstance> {
   const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL;
   if (connectionString) {
     registerRouteRoutes(app, { connectionString });
+    registerAuditRoutes(app, { connectionString });
   }
+
+  // Serves whatever LocalFilePdfStore (see @threshold/output) has written to
+  // this directory — the URLs already embedded in compliance_record/
+  // cargo_risk_assessment payloads returned by GET /api/audit. Demo-
+  // appropriate storage (local disk, no per-file auth), same call already
+  // made in packages/output/src/pdf-store.ts's own header.
+  const pdfDir = resolve(import.meta.dirname, '../artifacts/pdfs');
+  mkdirSync(pdfDir, { recursive: true });
+  await app.register(fastifyStatic, {
+    root: pdfDir,
+    prefix: '/pdfs/',
+    decorateReply: false,
+  });
 
   return app;
 }

@@ -1,0 +1,33 @@
+{
+  "include": ["client/src/**/*", "shared/**/*", "server/**/*"],
+  "exclude": ["node_modules", "build", "dist", "**/*.test.ts"],
+  "compilerOptions": {
+    "incremental": true,
+    "tsBuildInfoFile": "./node_modules/typescript/tsbuildinfo",
+    "noEmit": true,
+    "module": "ESNext",
+    "strict": true,
+    "lib": ["esnext", "dom", "dom.iterable"],
+    "jsx": "preserve",
+    "esModuleInterop": true,
+    "skipLibCheck": true,
+    "allowImportingTsExtensions": true,
+    "moduleResolution": "bundler",
+    "baseUrl": ".",
+    "types": ["node", "vite/client"],
+    "paths": {
+      "@/*": ["./client/src/*"],
+      "@shared/*": ["./shared/*"],
+      // Forces every react/react-dom resolution in this program — including
+      // from hoisted packages like input-otp/@radix-ui that this app alone
+      // depends on — onto this app's OWN nested React 19 copy, never onto
+      // apps/web's React 18 copy hoisted at the monorepo root. Without this,
+      // npm's workspace hoisting (root has no reason to nest packages
+      // nothing else needs) causes those packages' types to resolve against
+      // the wrong React version, since only react/@types/react themselves
+      // get nested here due to the direct version conflict.
+      "react": ["./node_modules/@types/react"],
+      "react-dom": ["./node_modules/@types/react-dom"]
+    }
+  }
+}

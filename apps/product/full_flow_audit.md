@@ -1,0 +1,7 @@
+# Threshold Full-Flow Audit — Initial Findings
+
+The supplied functional reference confirms the core route experience: a clean baseline, a single heat-spike injector at `wp-3`, and a timestamped fork between driver-compliance and cargo-risk outcomes. Its baseline event timeline exposes the rationale for every decision, including its deterministic, rule-based nature.
+
+The supplied backend is publicly reachable at `/health` and returned `status: ok`, `service: threshold-api`, and `phase: 0` on 21 August 2026. `/ready` also returned `ready: true` with the FortyGuard API key and Neon database URL checks passing. The required route, event, decision, compliance-PDF, and claims-PDF endpoint shapes all returned `404 Not Found` during read-only checks. CORS preflight is configured to allow an external HTTPS origin and the common read/write methods, but a browser-hosted site cannot safely call this HTTP-only backend from an HTTPS deployment without a secure backend origin or a same-origin proxy.
+
+The only discovered Clerk connector is an implementation-pattern reference and is disabled; it is not an authenticated Clerk application configuration. The initial implementation can proceed with the existing premium static product shell and visually complete role-based screen architecture. All live-data controls, exports, and protected-session paths will need to be gated behind verified endpoints and real identity configuration.

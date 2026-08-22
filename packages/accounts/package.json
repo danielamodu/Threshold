@@ -10,6 +10,14 @@
     ".": {
       "types": "./dist/index.d.ts",
       "default": "./dist/index.js"
+    },
+    "./roles": {
+      "types": "./dist/roles.d.ts",
+      "default": "./dist/roles.js"
+    },
+    "./clerk-roles": {
+      "types": "./dist/clerk-roles.d.ts",
+      "default": "./dist/clerk-roles.js"
     }
   },
   "files": [

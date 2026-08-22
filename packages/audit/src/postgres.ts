@@ -125,6 +125,55 @@ export class PostgresAuditSink implements AuditSink {
     );
   }
 
+  /**
+   * Org-scoped read (§11 Phase 7 follow-up) — filters at the SQL level, never
+   * by fetching every org's rows into Node and filtering after. `driverId`
+   * restricts further to routes assigned to that driver (via the `routes`
+   * table, not a jsonb payload scan) — the row-level check the `driver` role
+   * needs (audit_log read='own' in the signed-off permission table).
+   */
+  async readForOrg(orgId: string, options: { driverId?: string } = {}): Promise<AuditLogEntry[]> {
+    const client = await this.connected();
+    const { rows } = await client.query<{
+      seq: string;
+      entry_id: string;
+      entry_type: AuditLogInsert['entry_type'];
+      event_id: string;
+      route_id: string | null;
+      org_id: string;
+      payload: unknown;
+      rationale: string | null;
+      occurred_at: Date | null;
+      recorded_at: Date;
+    }>(
+      `select seq::text, entry_id, entry_type, event_id, route_id, org_id, payload,
+              rationale, occurred_at, recorded_at
+       from public.audit_log
+       where org_id = $1
+         and ($2::text is null or route_id in (
+           select route_id from public.routes where org_id = $1 and driver_id = $2
+         ))
+       order by seq`,
+      [orgId, options.driverId ?? null],
+    );
+
+    return rows.map(
+      (r) =>
+        ({
+          seq: Number(r.seq),
+          entry_id: r.entry_id,
+          entry_type: r.entry_type,
+          event_id: r.event_id,
+          route_id: r.route_id,
+          org_id: r.org_id,
+          payload: r.payload,
+          rationale: r.rationale,
+          occurred_at: r.occurred_at ? r.occurred_at.toISOString() : null,
+          recorded_at: r.recorded_at.toISOString(),
+        }) as AuditLogEntry,
+    );
+  }
+
   async close(): Promise<void> {
     if (this.client) {
       const c = this.client;

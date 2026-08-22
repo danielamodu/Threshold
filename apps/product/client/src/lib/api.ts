@@ -1,0 +1,85 @@
+/**
+ * Real API client for the Fastify backend (§11 product-shell wiring).
+ * Every call is bearer-authenticated with the real Clerk session token —
+ * there is no local fixture path left in here.
+ */
+import type { CargoClass } from "@threshold/types";
+
+const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
+
+export class ApiError extends Error {
+  constructor(
+    public status: number,
+    message: string,
+  ) {
+    super(message);
+    this.name = "ApiError";
+  }
+}
+
+async function request<T>(path: string, token: string | null, init: RequestInit = {}): Promise<T> {
+  const res = await fetch(`${API_BASE}${path}`, {
+    ...init,
+    headers: {
+      ...(token ? { Authorization: `Bearer ${token}` } : {}),
+      ...(init.body ? { "Content-Type": "application/json" } : {}),
+      ...init.headers,
+    },
+  });
+
+  if (!res.ok) {
+    const body = await res.json().catch(() => ({}) as { error?: string });
+    throw new ApiError(res.status, body.error ?? `Request failed with status ${res.status}`);
+  }
+  if (res.status === 204) return undefined as T;
+  return (await res.json()) as T;
+}
+
+export interface ApiRoute {
+  id: string;
+  org_id: string;
+  route_id: string;
+  cargo_class: CargoClass;
+  driver_id: string;
+  created_at: string;
+}
+
+/** Mirrors packages/types/src/audit.ts's AuditLogEntry — the real shape GET /api/audit returns. */
+export interface ApiAuditEntry {
+  seq: number;
+  entry_id: string;
+  entry_type: "thermal_exposure_event" | "compliance_record" | "cargo_risk_assessment" | "agent_decision";
+  event_id: string;
+  route_id: string | null;
+  org_id: string;
+  payload: Record<string, unknown>;
+  rationale: string | null;
+  occurred_at: string | null;
+  recorded_at: string;
+}
+
+export function listRoutes(token: string | null) {
+  return request<{ routes: ApiRoute[] }>("/api/routes", token);
+}
+
+export function getRoute(token: string | null, routeId: string) {
+  return request<ApiRoute>(`/api/routes/${encodeURIComponent(routeId)}`, token);
+}
+
+export function createRoute(
+  token: string | null,
+  body: { route_id: string; driver_id: string; cargo_class: CargoClass },
+) {
+  return request<ApiRoute>("/api/routes", token, { method: "POST", body: JSON.stringify(body) });
+}
+
+export function listAudit(token: string | null) {
+  return request<{ entries: ApiAuditEntry[] }>("/api/audit", token);
+}
+
+/** LocalFilePdfStore returns a relative /pdfs/... URL — apps/api serves it, not this app. */
+export function resolvePdfUrl(exportedPdfUrl: string | null | undefined): string | null {
+  if (!exportedPdfUrl) return null;
+  if (exportedPdfUrl.startsWith("memory://")) return null; // never resolvable — ephemeral store
+  return `${API_BASE}${exportedPdfUrl}`;
+}

@@ -12,6 +12,12 @@
       "runtimeExecutable": "npm",
       "runtimeArgs": ["run", "dev", "--workspace", "@threshold/api"],
       "port": 8080
+    },
+    {
+      "name": "threshold-product",
+      "runtimeExecutable": "npm",
+      "runtimeArgs": ["run", "dev", "--workspace", "@threshold/product"],
+      "port": 3100
     }
   ]
 }
