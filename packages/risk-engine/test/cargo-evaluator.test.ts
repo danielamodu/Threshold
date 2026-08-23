@@ -181,6 +181,112 @@ describe('Cargo Risk Evaluator', () => {
     });
   });
 
+  /**
+   * `breach_episode_started` — the signal Phase 4 generates claim drafts on.
+   *
+   * Exposure never decays, so 'breach' is a state a route ENTERS and never
+   * leaves, and `recommended_action` reads 'claim_draft' on every reading after
+   * the crossing. Generating an artifact per recommendation therefore produced
+   * one claim draft per waypoint for a single heat event. This flag isolates
+   * the transition; the assertions below pin down that it fires exactly once
+   * per episode and that `recommended_action` is unchanged by it.
+   */
+  describe('breach episodes', () => {
+    it('fires on the reading that crosses into breach, and not on the next one', () => {
+      const e = evaluator('pharma');
+
+      // 42C for 1h => (42-30)x1 = 12 => exactly the breach boundary.
+      const crossing = e.evaluate(event({ temp_c: 42, timestamp: '2026-08-17T14:00:00.000Z' }));
+      assert.equal(crossing.assessment.cumulative_exposure_score, 12);
+      assert.equal(crossing.assessment.risk_level, 'breach');
+      assert.equal(crossing.breach_episode_started, true);
+
+      // Another hour at 42C => +12 => 24. Deeper into the same episode, not a
+      // new one.
+      const deeper = e.evaluate(event({ temp_c: 42, timestamp: '2026-08-17T15:00:00.000Z' }));
+      assert.equal(deeper.assessment.cumulative_exposure_score, 24);
+      assert.equal(deeper.assessment.risk_level, 'breach');
+      assert.equal(deeper.breach_episode_started, false);
+    });
+
+    it('stays false once the weather cools but the accrued exposure keeps the route in breach', () => {
+      // This is the shape of the duplication bug: a reading that contributes
+      // nothing at all still reported 'claim_draft' and still minted a draft.
+      const e = evaluator('pharma');
+      e.evaluate(event({ temp_c: 42, timestamp: '2026-08-17T14:00:00.000Z' }));
+
+      const cooled = e.evaluate(event({ temp_c: 18, timestamp: '2026-08-17T15:00:00.000Z' }));
+      assert.equal(cooled.contributed_degree_hours, 0);
+      assert.equal(cooled.assessment.cumulative_exposure_score, 12);
+      assert.equal(cooled.assessment.risk_level, 'breach');
+      assert.equal(cooled.breach_episode_started, false);
+
+      // §3 is untouched on purpose: 'claim_draft' is still the correct answer
+      // to "what does this reading call for". Only the trigger for GENERATING
+      // one moved off it.
+      assert.equal(cooled.assessment.recommended_action, 'claim_draft');
+    });
+
+    it('is false for readings that never reach breach', () => {
+      const e = evaluator('pharma');
+
+      // 34C for 1h => 4 => the elevated boundary, not breach.
+      const elevated = e.evaluate(event({ temp_c: 34, timestamp: '2026-08-17T14:00:00.000Z' }));
+      assert.equal(elevated.assessment.risk_level, 'elevated');
+      assert.equal(elevated.breach_episode_started, false);
+
+      // At the ceiling: no accrual, so still 4 and still elevated.
+      const flat = e.evaluate(event({ temp_c: 30, timestamp: '2026-08-17T15:00:00.000Z' }));
+      assert.equal(flat.assessment.cumulative_exposure_score, 4);
+      assert.equal(flat.breach_episode_started, false);
+    });
+
+    it('reset re-arms it, so a second shipment on the same lane gets its own episode', () => {
+      // Episode-scoped, not once-per-route-forever. Withholding the second
+      // shipment's claim would be a worse bug than the duplicates.
+      const e = evaluator('pharma');
+      assert.equal(
+        e.evaluate(event({ temp_c: 42, timestamp: '2026-08-17T14:00:00.000Z' }))
+          .breach_episode_started,
+        true,
+      );
+      assert.equal(
+        e.evaluate(event({ temp_c: 42, timestamp: '2026-08-17T15:00:00.000Z' }))
+          .breach_episode_started,
+        false,
+      );
+
+      e.reset('route-test');
+
+      // No predecessor again, so the first hour is charged at
+      // initialExposureHours and this crosses on its own.
+      const second = e.evaluate(event({ temp_c: 42, timestamp: '2026-08-17T16:00:00.000Z' }));
+      assert.equal(second.assessment.cumulative_exposure_score, 12);
+      assert.equal(second.breach_episode_started, true);
+    });
+
+    it('tracks episodes per route independently', () => {
+      const routes = new RouteRegistry()
+        .register({ route_id: 'route-a', driver_id: 'd1', cargo_class: 'pharma' })
+        .register({ route_id: 'route-b', driver_id: 'd2', cargo_class: 'pharma' });
+      const e = new CargoRiskEvaluator({ routes, newId: uuid, initialExposureHours: 1 });
+
+      const a1 = e.evaluate(
+        event({ temp_c: 42, route_id: 'route-a', timestamp: '2026-08-17T14:00:00.000Z' }),
+      );
+      const b1 = e.evaluate(
+        event({ temp_c: 42, route_id: 'route-b', timestamp: '2026-08-17T14:00:00.000Z' }),
+      );
+      const a2 = e.evaluate(
+        event({ temp_c: 42, route_id: 'route-a', timestamp: '2026-08-17T15:00:00.000Z' }),
+      );
+
+      assert.equal(a1.breach_episode_started, true);
+      assert.equal(b1.breach_episode_started, true, `route-b's episode is its own`);
+      assert.equal(a2.breach_episode_started, false, `route-a is still inside its first episode`);
+    });
+  });
+
   it('scores a degraded-humidity event normally — humidity is irrelevant to cargo', () => {
     // The cargo side depends on temperature only, so a null humidity must not
     // block it. The two evaluators degrade independently.

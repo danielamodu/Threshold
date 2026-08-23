@@ -21,6 +21,7 @@
     "format": "prettier --write .",
     "format:check": "prettier --check .",
     "verify:fortyguard": "npm run verify --workspace @threshold/fortyguard-client",
+    "probe:fortyguard": "npm run probe --workspace @threshold/fortyguard-client",
     "verify:motive": "npm run verify --workspace @threshold/motive-client",
     "db:migrate": "tsx db/migrate.mts",
     "db:migrate:dry": "tsx db/migrate.mts --dry-run",

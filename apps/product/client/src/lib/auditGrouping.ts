@@ -90,3 +90,30 @@ export function groupAuditByEvent(entries: ApiAuditEntry[]): GroupedDecision[] {
   }
   return Array.from(map.values()).sort((a, b) => b.seq - a.seq);
 }
+
+/**
+ * One row per claim, not one per breaching reading.
+ *
+ * Cargo exposure never decays, so once a route crosses its spoilage threshold
+ * every later assessment on that route also scores 'breach' and carries the
+ * same `claim_draft_id` — the one draft that covers the episode. Filtering
+ * groups on `cargo.claim_draft_id` alone therefore yields one row per reading,
+ * all pointing at the same claim, and every row except the crossing has no
+ * `claim` payload of its own and so renders as "Not yet generated".
+ *
+ * Collapsing on `claim_draft_id` and preferring the group that actually holds
+ * the persisted draft keeps that reading's exposure figure — the number the
+ * PDF was generated from — as the one shown.
+ */
+export function claimEpisodes(groups: GroupedDecision[]): GroupedDecision[] {
+  const byDraft = new Map<string, GroupedDecision>();
+  for (const g of groups) {
+    const id = g.claim?.claim_draft_id ?? g.cargo?.claim_draft_id;
+    if (!id) continue;
+    const existing = byDraft.get(id);
+    // First writer wins, except that a group carrying the draft row itself
+    // always beats one that only references its id.
+    if (!existing || (!existing.claim && g.claim)) byDraft.set(id, g);
+  }
+  return Array.from(byDraft.values()).sort((a, b) => b.seq - a.seq);
+}

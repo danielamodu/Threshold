@@ -4,10 +4,12 @@
  *   "Claim Draft Generator — structured claim payload for the cargo side...
  *    doesn't need a real insurer integration."
  *
- * ⚠ PROPOSED SHAPE — not defined by §3. `CargoRiskAssessment.claim_draft_id`
- * is the only thing §3 locks down; the draft it points at is Phase 4's own
- * design, same status as the spoilage curves in risk-engine — reasoned, not
- * signed off.
+ * The SHAPE is not declared here. `ClaimDraft` lives in @threshold/types
+ * alongside the audit envelope that carries it, because that package is the
+ * wire contract's source of truth and `AuditPayload` has to name it. This file
+ * owns only how one is built. See that type's header for why it is ⚠ PROPOSED
+ * rather than a §3 contract, and for the reasoning behind
+ * `estimated_loss_value`.
  *
  * Deliberately does NOT invent a dollar figure. Nothing in this system
  * carries cargo valuation data (no manifest value, no insured amount
@@ -18,28 +20,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { CargoClass, CargoRiskAssessment, CargoRiskLevel } from '@threshold/types';
-
-export interface ClaimDraft {
-  claim_draft_id: string;
-  assessment_id: string;
-  event_id: string;
-  route_id: string;
-  cargo_class: CargoClass;
-  risk_level: CargoRiskLevel;
-  cumulative_exposure_score: number;
-  threshold: number;
-  incident_summary: string;
-  /**
-   * Deliberately null — see the file header. Never fabricated, even as a
-   * placeholder; a real insurer-facing figure has to come from a real
-   * manifest value this system does not have.
-   */
-  estimated_loss_value: null;
-  estimated_loss_note: string;
-  generated_at: string;
-  exported_pdf_url: string | null;
-}
+import type { CargoRiskAssessment, ClaimDraft } from '@threshold/types';
 
 export interface ClaimDraftOptions {
   newId?: () => string;

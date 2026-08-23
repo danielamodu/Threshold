@@ -35,6 +35,22 @@
  * reroute) and folds the result into the record BEFORE that record is pushed
  * anywhere or appended to the sink. Only the finished record is ever logged.
  *
+ * ── One claim draft per breach EPISODE, not per breaching reading ───────────
+ * Cargo exposure is cumulative and never decays, so once a route crosses its
+ * spoilage threshold every subsequent assessment on that route also scores
+ * 'breach' and recommends 'claim_draft'. Generating on that recommendation
+ * directly produced one draft per waypoint — 38 on a 40-waypoint route — for
+ * one continuous heat event. Since `audit_log` is append-only, every one of
+ * those was permanent.
+ *
+ * The cargo subscriber therefore generates on `CargoEvaluation.
+ * breach_episode_started` (the crossing) rather than on `recommended_action`
+ * (the standing state). Later readings in the same episode still carry the
+ * episode's `claim_draft_id`, so nothing loses its link to the claim. The §3
+ * contract is untouched: `recommended_action` still says 'claim_draft' on
+ * every breaching reading, because that remains the correct answer to "what
+ * does this reading call for".
+ *
  * ── org_id (§11 Phase 7) is a construction-time concern, not a per-event one ──
  * `audit_log.org_id` is required, but it is NOT threaded through
  * `RouteContextProvider`/the evaluators, and `ThermalExposureEvent` still
@@ -51,7 +67,7 @@
  */
 
 import { randomUUID } from 'node:crypto';
-import type { AgentDecision, ThermalExposureEvent } from '@threshold/types';
+import type { AgentDecision, ClaimDraft, ThermalExposureEvent } from '@threshold/types';
 import type { AuditSink } from '@threshold/audit';
 import { HardCodedThresholdDecider } from '@threshold/decision-layer';
 import { ingest, type TelemetryAdapter, type ThermalReadingSource } from '@threshold/ingestion';
@@ -63,7 +79,6 @@ import {
   generateRerouteSuggestion,
   renderClaimDraftPdf,
   renderCompliancePdf,
-  type ClaimDraft,
   type PdfStore,
   type WebhookEmitter,
 } from '@threshold/output';
@@ -112,7 +127,10 @@ export interface PipelineResult {
   compliance: ComplianceEvaluation[];
   cargo: CargoEvaluation[];
   decisions: AgentDecision[];
-  /** Only present for events that actually breached (§4 exit condition). */
+  /**
+   * One per breach EPISODE, not one per breaching event — see the file header.
+   * Empty for a run that never crossed a spoilage threshold (§4 exit condition).
+   */
   claimDrafts: ClaimDraft[];
 }
 
@@ -138,6 +156,17 @@ export class RiskPipeline {
   private readonly cargoResults: CargoEvaluation[] = [];
   private readonly decisions: AgentDecision[] = [];
   private readonly claimDrafts: ClaimDraft[] = [];
+  /**
+   * route_id → the `claim_draft_id` of the breach episode currently open on
+   * that route, so later readings in the same episode can reference the draft
+   * that covers them without generating another one.
+   *
+   * Only ever read while an episode is open, so there is no stale-read path:
+   * `CargoRiskEvaluator.reset()` drops the accumulator, which makes the next
+   * breaching event report `breach_episode_started` and replace this entry
+   * before anything reads it.
+   */
+  private readonly episodeClaimDraftIds = new Map<string, string>();
 
   constructor(options: PipelineOptions) {
     this.sink = options.sink;
@@ -194,15 +223,28 @@ export class RiskPipeline {
       let loggableDraft: ClaimDraft | null = null;
 
       if (evaluation.assessment.recommended_action === 'claim_draft') {
-        const draft = generateClaimDraft(evaluation.assessment, event.route_id, {
-          newId: this.newId,
-        });
-        const pdfBytes = await renderClaimDraftPdf(draft);
-        const exported_pdf_url = await this.pdfStore.save(`claim-${draft.claim_draft_id}.pdf`, pdfBytes);
-        const finalDraft = { ...draft, exported_pdf_url };
-        this.claimDrafts.push(finalDraft);
-        loggableDraft = finalDraft;
-        finalAssessment = { ...evaluation.assessment, claim_draft_id: finalDraft.claim_draft_id };
+        if (evaluation.breach_episode_started) {
+          const draft = generateClaimDraft(evaluation.assessment, event.route_id, {
+            newId: this.newId,
+          });
+          const pdfBytes = await renderClaimDraftPdf(draft);
+          const exported_pdf_url = await this.pdfStore.save(`claim-${draft.claim_draft_id}.pdf`, pdfBytes);
+          const finalDraft = { ...draft, exported_pdf_url };
+          this.claimDrafts.push(finalDraft);
+          loggableDraft = finalDraft;
+          this.episodeClaimDraftIds.set(event.route_id, finalDraft.claim_draft_id);
+          finalAssessment = { ...evaluation.assessment, claim_draft_id: finalDraft.claim_draft_id };
+        } else {
+          // Still inside the breach episode a previous event opened. One heat
+          // event is one claim, so no second draft is generated — but the
+          // assessment must still point at the draft that covers it. Leaving
+          // `claim_draft_id` null here would tell the Claims surface that a
+          // breach has no draft when it demonstrably does.
+          finalAssessment = {
+            ...evaluation.assessment,
+            claim_draft_id: this.episodeClaimDraftIds.get(event.route_id) ?? null,
+          };
+        }
       } else if (evaluation.assessment.recommended_action === 'reroute') {
         // §3 types this field as the deliberately loose `object | null` —
         // RerouteSuggestion is Phase 4's own shape underneath it, so the cast

@@ -83,6 +83,80 @@ function pdfFilenameFromUrl(url: string | null): string {
   return url.replace('memory://', '');
 }
 
+/**
+ * The claim-draft duplication bug was reported at 40 waypoints, so it is
+ * reproduced at 40 waypoints, on the same pharma curve as ROUTE (ceiling
+ * 30 °C, elevated 4 °C·h, breach 12 °C·h).
+ *
+ * ── Why the legs are 18 minutes and not 60 ──────────────────────────────────
+ * §8's forecast horizon is 12 hours and `assertWithinForecastHorizon` enforces
+ * it in the adapter's constructor, so 40 waypoints at ROUTE's 60-minute legs
+ * (a 39-hour span) does not merely read as unrealistic — it throws
+ * ForecastHorizonError before a single event is produced. 18-minute legs span
+ * 11.7h, inside the horizon.
+ *
+ * ── Why the spike is 25 °C at TWO waypoints ─────────────────────────────────
+ * Shorter legs mean less elapsed time per reading, and degree-hours are
+ * `over_ceiling × hours`: at 0.3h a reading contributes a third of what
+ * ROUTE's 1h readings do, so the suite's usual single 20 °C spike at wp-3
+ * cannot reach a 12 °C·h threshold on its own. Spiking wp-2 and wp-3 by 25 °C
+ * instead makes the exposure build across two readings and cross on the
+ * second, which is both what a real heat event looks like and what pins the
+ * crossing to a specific waypoint.
+ *
+ * The resulting bounds are hard, not seed-dependent — `uniform()` is bounded,
+ * so every reading is too. Ambient is 26.33/26.51/26.67 °C at wp-1/2/3 (the
+ * diurnal curve at 13:00/13:18/13:36 Z), forecast jitter is ±0.4, and
+ * temp_c = mean + 1.9 × spread with spread ∈ [0.8, 2.2):
+ *
+ *   wp-1  unspiked, 1h    score ∈ [0, 0.91]        → nominal  (< 4)
+ *   wp-2  +25 °C,  0.3h   score ∈ [6.79, 8.74]     → elevated (≥ 4, < 12)
+ *   wp-3  +25 °C,  0.3h   score ∈ [13.63, 16.61]   → BREACH   (≥ 12)
+ *
+ * and exposure never decays, so wp-4..wp-40 stay in breach. 38 breaching
+ * readings, waypoints 3 through 40 — the reported count, for any seed.
+ */
+const LONG_ROUTE_WAYPOINTS = 40;
+const LONG_ROUTE_SPIKES: Record<string, number> = { 'wp-2': 25, 'wp-3': 25 };
+/** Waypoints 3..40 inclusive: every reading from the crossing to the end. */
+const LONG_ROUTE_BREACHING_READINGS = LONG_ROUTE_WAYPOINTS - 2;
+
+function longRoute(): RouteSpec {
+  return {
+    route_id: 'route-phx-long',
+    driver_id: ROUTE.driver_id,
+    cargo_class: 'pharma',
+    departs_at: ROUTE.departs_at,
+    leg_minutes: 18,
+    waypoints: Array.from({ length: LONG_ROUTE_WAYPOINTS }, (_, i) => ({
+      waypoint_id: `wp-${i + 1}`,
+      lat: 33.4484 + i * 0.01,
+      lng: -112.074 - i * 0.01,
+    })),
+  };
+}
+
+function buildLong(readingOptions: Record<string, unknown> = {}) {
+  const route = longRoute();
+  const sink = new InMemoryAuditSink();
+  const routes = new RouteRegistry().register({
+    route_id: route.route_id,
+    driver_id: route.driver_id,
+    cargo_class: route.cargo_class,
+  });
+  const pdfStore = new InMemoryPdfStore();
+  const pipeline = new RiskPipeline({
+    sink,
+    org_id: 'org_test',
+    routes,
+    initialExposureHours: 1,
+    pdfStore,
+  });
+  const telemetry = new SimulatedTelemetryAdapter({ route, seed: 1234 });
+  const readings = new SyntheticThermalReadingSource({ seed: 99, ...readingOptions });
+  return { sink, pipeline, telemetry, readings, pdfStore, route };
+}
+
 describe('risk pipeline (Phase 2 exit condition)', () => {
   it('runs a whole simulated route with no manual intervention', async () => {
     const { pipeline, telemetry, readings } = build();
@@ -411,11 +485,11 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
       assert.ok(draft, 'sanity: this spike must actually produce a draft');
 
       // Every draft the run produced is in the append-only log, exactly once —
-      // deliberately not hardcoded to 1. Cumulative exposure stays above the
-      // threshold once crossed (see 'cargo exposure accumulates across the
-      // route'), so a spike at wp-3 keeps breaching at wp-4 as well. The
-      // invariant Task 1 introduces is one logged entry per generated draft,
-      // not one draft per run.
+      // deliberately not hardcoded to 1. The invariant this asserts is one
+      // logged entry per generated draft, whatever the count; how many drafts a
+      // run generates is the separate question owned by 'one breach EPISODE
+      // produces one claim draft' below. (A spike at wp-3 also keeps breaching
+      // at wp-4, so before that fix this run generated two.)
       const logged = sink.ofType('claim_draft');
       assert.equal(logged.length, claimDrafts.length);
       assert.deepEqual(
@@ -450,7 +524,128 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
       // agent_decision alone, and this must not have widened it.
       assert.equal(entry.rationale, null);
     });
+  });
 
+  /**
+   * Regression cover for the claim-draft duplication bug.
+   *
+   * Cumulative exposure never decays, so a single heat spike put the route into
+   * 'breach' permanently, `recommended_action` read 'claim_draft' on every
+   * remaining reading, and the pipeline generated a draft for each one — 38 on
+   * a 40-waypoint route, all of them appended to an append-only log and
+   * therefore undeletable.
+   *
+   * These tests fail loudly if the episode logic is removed: the first one
+   * reports the real duplicate count in its failure message rather than a bare
+   * "38 !== 1".
+   */
+  describe('one breach EPISODE produces one claim draft', () => {
+    it('a 40-waypoint route in continuous breach writes ONE draft, not one per reading', async () => {
+      const { sink, pipeline, telemetry, readings } = buildLong({ spikes: LONG_ROUTE_SPIKES });
+      const { events, cargo, claimDrafts } = await pipeline.run(telemetry, readings);
+
+      assert.equal(events.length, LONG_ROUTE_WAYPOINTS);
+
+      // The exposure ladder the reproduction depends on, asserted rather than
+      // assumed: if the curve, the legs or the spikes ever drift, this fails
+      // HERE with the real risk levels instead of silently reshaping the bug
+      // the tests below think they are reproducing.
+      assert.deepEqual(
+        cargo.slice(0, 3).map((c) => c.assessment.risk_level),
+        ['nominal', 'elevated', 'breach'],
+        'the spike must build across wp-2 and cross into breach at wp-3',
+      );
+
+      // The reproduction itself. Exposure never decays, so every reading from
+      // the wp-3 crossing to wp-40 also scores 'breach' and recommends
+      // 'claim_draft': 38 readings, each of which used to mint its own draft.
+      const breaching = cargo.filter((c) => c.assessment.recommended_action === 'claim_draft');
+      assert.equal(
+        breaching.length,
+        LONG_ROUTE_BREACHING_READINGS,
+        `the reproduction must actually exercise the bug — expected ` +
+          `${LONG_ROUTE_BREACHING_READINGS} breaching readings (waypoints 3-40), got ` +
+          `${breaching.length} of ${cargo.length}`,
+      );
+
+      assert.equal(
+        claimDrafts.length,
+        1,
+        `one continuous breach must produce one claim draft, got ${claimDrafts.length} ` +
+          `for ${breaching.length} breaching readings`,
+      );
+      assert.equal(
+        sink.ofType('claim_draft').length,
+        1,
+        'the append-only log is where duplicates become permanent — exactly one belongs here',
+      );
+    });
+
+    it('the draft is the one for the reading that CROSSED into breach', async () => {
+      const { pipeline, telemetry, readings } = buildLong({ spikes: LONG_ROUTE_SPIKES });
+      const { events, cargo, claimDrafts } = await pipeline.run(telemetry, readings);
+
+      const crossing = cargo.findIndex((c) => c.assessment.risk_level === 'breach');
+      assert.ok(crossing >= 0, 'sanity: something must breach');
+      assert.equal(events[crossing]?.waypoint_id, 'wp-3', 'sanity: the spike is what crosses');
+
+      const draft = claimDrafts[0];
+      assert.ok(draft);
+      assert.equal(draft.event_id, events[crossing]?.event_id);
+      assert.equal(draft.assessment_id, cargo[crossing]?.assessment.assessment_id);
+    });
+
+    it('later readings in the episode still point at the draft covering them, never null', async () => {
+      // Suppressing the duplicate must not cost those assessments their link to
+      // the claim — a null here would tell the Claims surface that a breach has
+      // no draft when one demonstrably exists.
+      const { pipeline, telemetry, readings } = buildLong({ spikes: LONG_ROUTE_SPIKES });
+      const { cargo, claimDrafts } = await pipeline.run(telemetry, readings);
+
+      const draft = claimDrafts[0];
+      assert.ok(draft);
+      const breaching = cargo.filter((c) => c.assessment.risk_level === 'breach');
+      assert.equal(breaching.length, LONG_ROUTE_BREACHING_READINGS);
+
+      for (const { assessment } of breaching) {
+        assert.equal(
+          assessment.claim_draft_id,
+          draft.claim_draft_id,
+          `breaching assessment ${assessment.assessment_id} must reference the episode's draft`,
+        );
+      }
+    });
+
+    it('a new episode after reset() does get its own draft', async () => {
+      // The dedup is episode-scoped, not once-per-route-forever. A second
+      // shipment on the same lane that breaches must still produce a claim;
+      // silently withholding one would be a worse bug than the duplicates.
+      const { sink, pipeline, telemetry, readings, route } = buildLong({ spikes: LONG_ROUTE_SPIKES });
+      await pipeline.run(telemetry, readings);
+      assert.equal(pipeline.results.claimDrafts.length, 1);
+
+      pipeline.cargo.reset(route.route_id);
+      // Different adapter seed on purpose: a second shipment does not get the
+      // same weather. The bounds in longRoute()'s header hold for any seed, so
+      // this still crosses at wp-3.
+      await pipeline.run(
+        new SimulatedTelemetryAdapter({ route, seed: 4321 }),
+        new SyntheticThermalReadingSource({ seed: 99, spikes: LONG_ROUTE_SPIKES }),
+      );
+
+      assert.equal(
+        pipeline.results.claimDrafts.length,
+        2,
+        'reset() forgets accumulated exposure, so the next breach is a new episode',
+      );
+      assert.equal(sink.ofType('claim_draft').length, 2);
+      const [first, second] = pipeline.results.claimDrafts;
+      assert.ok(first && second);
+      assert.notEqual(first.claim_draft_id, second.claim_draft_id);
+    });
+  });
+
+  describe('Phase 4 exit condition, continued', () => {
     it('an elevated (not yet breaching) event gets a mocked reroute suggestion instead of a claim draft', async () => {
       // A moderate spike that lands in 'elevated', not 'breach'.
       const { pipeline, telemetry, readings } = build({ spikes: { 'wp-2': 6 } });

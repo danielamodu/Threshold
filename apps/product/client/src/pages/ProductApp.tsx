@@ -14,7 +14,7 @@ import { useParams } from "wouter";
 import { ProductShell, useProductRoute } from "@/components/ProductShell";
 import { useApiCall } from "@/hooks/useApiCall";
 import { createDriver, createRoute, getRoute, linkDriver, listAudit, listDrivers, listRoutes, resolvePdfUrl, type ApiDriver, type ApiRoute } from "@/lib/api";
-import { groupAuditByEvent, type GroupedDecision } from "@/lib/auditGrouping";
+import { claimEpisodes, groupAuditByEvent, type GroupedDecision } from "@/lib/auditGrouping";
 import type { RouteStatus } from "@/lib/productShellData";
 import type { CargoClass } from "@threshold/types";
 
@@ -355,7 +355,7 @@ function RecordsPage({ driverOnly = false }: { driverOnly?: boolean }) {
 
 function ClaimsPage() {
   const { data, loading, error } = useApiCall((token) => listAudit(token), []);
-  const claims = data ? groupAuditByEvent(data.entries).filter((g) => g.cargo?.claim_draft_id) : [];
+  const claims = data ? claimEpisodes(groupAuditByEvent(data.entries)) : [];
   return <ProductShell title="Claims" subtitle="">
     <section className="product-content">
       {loading && <LoadingRow />}

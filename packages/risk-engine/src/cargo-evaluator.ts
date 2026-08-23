@@ -41,6 +41,28 @@ export interface CargoEvaluation {
   /** Hours charged for this event. */
   exposure_hours: number;
   explanation: string;
+  /**
+   * True only on the event that CROSSES from below the breach threshold to at
+   * or above it — the start of a breach EPISODE, not every reading inside one.
+   *
+   * Why this exists: `score` is monotonically non-decreasing (`degreeHours()`
+   * can never return a negative), so once the threshold is crossed
+   * `riskLevelFor()` returns 'breach' for every remaining event on the route
+   * and `recommended_action` is 'claim_draft' on all of them. That is correct
+   * as a per-reading recommendation and wrong as a trigger for GENERATING an
+   * artifact: acting on it directly produced one claim draft per waypoint — 38
+   * on a 40-waypoint route — for a single continuous heat event.
+   *
+   * `recommended_action` is deliberately NOT changed. It is a §3 contract
+   * field and still answers "what does this reading call for". This flag is
+   * the separate question "is this the first reading that called for it", and
+   * so it lives on the evaluator's own wrapper type, outside the contract.
+   *
+   * An episode can only end via `reset(route_id)`, since exposure never
+   * decays. That case is handled for free: reset() drops the accumulator, so
+   * the next breaching event has no predecessor and starts a fresh episode.
+   */
+  breach_episode_started: boolean;
 }
 
 export interface CargoEvaluatorOptions {
@@ -54,6 +76,12 @@ export interface CargoEvaluatorOptions {
 interface RouteAccumulator {
   score: number;
   lastTimestampMs: number;
+  /**
+   * Whether the PREVIOUS event on this route already scored 'breach'. Used
+   * only to tell crossing into breach apart from staying in it — see
+   * CargoEvaluation.breach_episode_started.
+   */
+  inBreach: boolean;
 }
 
 export class CargoRiskEvaluator {
@@ -96,10 +124,18 @@ export class CargoRiskEvaluator {
     const contributed = degreeHours(event.temp_c, exposure_hours, curve);
     const score = round2((previous?.score ?? 0) + contributed);
 
-    this.accumulators.set(event.route_id, { score, lastTimestampMs: nowMs });
-
     const risk_level = riskLevelFor(score, curve);
     const recommended_action = actionFor(risk_level);
+
+    // Crossing INTO breach, not merely being in it. Read off `previous`, before
+    // the accumulator below overwrites it.
+    const breach_episode_started = risk_level === 'breach' && !(previous?.inBreach ?? false);
+
+    this.accumulators.set(event.route_id, {
+      score,
+      lastTimestampMs: nowMs,
+      inBreach: risk_level === 'breach',
+    });
 
     const assessment: CargoRiskAssessment = {
       assessment_id: this.newId(),
@@ -125,7 +161,13 @@ export class CargoRiskEvaluator {
           `${curve.ceiling_c}°C, so no exposure accrued. Cumulative exposure remains ` +
           `${score}. Risk is ${risk_level}.`;
 
-    return { assessment, contributed_degree_hours: round2(contributed), exposure_hours, explanation };
+    return {
+      assessment,
+      contributed_degree_hours: round2(contributed),
+      exposure_hours,
+      explanation,
+      breach_episode_started,
+    };
   }
 }
 

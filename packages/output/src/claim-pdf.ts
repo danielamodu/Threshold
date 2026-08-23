@@ -9,7 +9,7 @@
  */
 
 import { PDFDocument, StandardFonts, rgb, type PDFFont, type PDFPage } from 'pdf-lib';
-import type { ClaimDraft } from './claim-draft.js';
+import type { ClaimDraft } from '@threshold/types';
 
 const PAGE_WIDTH = 612;
 const PAGE_HEIGHT = 792;

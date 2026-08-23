@@ -21,14 +21,18 @@ import type {
  * ⚠ PROPOSED SHAPE — not defined by §3, same status the spoilage curves in
  * risk-engine carry: reasoned, not signed off. `CargoRiskAssessment.
  * claim_draft_id` is the only thing §3 itself locks down; this is Phase 4's
- * own design for what that id points at (packages/output/src/claim-draft.ts
- * is still where it's generated — this is only the envelope-referenced
- * shape, moved here so audit.ts can name it without @threshold/types
- * depending on @threshold/output, which would be circular).
+ * own design for what that id points at.
  *
- * `estimated_loss_value` stays `null`, always — nothing in this system
- * carries cargo valuation data, and a fabricated dollar figure on a document
- * titled "claim draft" would be actively wrong, not just incomplete.
+ * ── This is the ONLY definition of this shape ────────────────────────────────
+ * `packages/output/src/claim-draft.ts` generates the draft and imports this
+ * type; it does not declare its own. It used to, and for a while two
+ * structurally identical 13-field interfaces existed in parallel — one on the
+ * wire (this one, in the audit envelope) and one at the generator. Nothing
+ * caught the drift risk because they happened to match, which is exactly the
+ * kind of duplication that silently stops matching. The type lives here
+ * because this package is the wire contract's source of truth, and because
+ * `AuditPayload` below has to name it while @threshold/types cannot depend on
+ * @threshold/output (that would be circular).
  *
  * §11 product-shell wiring follow-up: added so a real, durable PDF link can
  * exist for a claim draft at all — previously generateClaimDraft()'s result
@@ -45,6 +49,13 @@ export interface ClaimDraft {
   cumulative_exposure_score: number;
   threshold: number;
   incident_summary: string;
+  /**
+   * Deliberately null, always — nothing in this system carries cargo valuation
+   * data (no manifest value, no insured amount anywhere in §3), and never
+   * fabricated even as a placeholder: a made-up dollar figure on a document
+   * titled "claim draft" would be actively wrong, not just incomplete. A real
+   * insurer-facing figure has to come from a real manifest value.
+   */
   estimated_loss_value: null;
   estimated_loss_note: string;
   generated_at: string;
