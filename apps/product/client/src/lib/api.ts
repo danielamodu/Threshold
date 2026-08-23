@@ -48,7 +48,12 @@ export interface ApiRoute {
 export interface ApiAuditEntry {
   seq: number;
   entry_id: string;
-  entry_type: "thermal_exposure_event" | "compliance_record" | "cargo_risk_assessment" | "agent_decision";
+  entry_type:
+    | "thermal_exposure_event"
+    | "compliance_record"
+    | "cargo_risk_assessment"
+    | "agent_decision"
+    | "claim_draft";
   event_id: string;
   route_id: string | null;
   org_id: string;
@@ -56,6 +61,28 @@ export interface ApiAuditEntry {
   rationale: string | null;
   occurred_at: string | null;
   recorded_at: string;
+}
+
+/** Mirrors packages/accounts/src/drivers.ts's Driver. */
+export interface ApiDriver {
+  id: string;
+  org_id: string;
+  driver_id: string;
+  name: string | null;
+  clerk_user_id: string | null;
+  created_at: string;
+}
+
+/**
+ * `driver_unlinked` is only ever set for a driver-role session whose Clerk
+ * user has no `drivers.clerk_user_id` row yet — an empty feed for a
+ * configuration reason, not because there is nothing to show. See
+ * apps/api/src/routes/audit.ts.
+ */
+export interface AuditResponse {
+  entries: ApiAuditEntry[];
+  driver_unlinked?: boolean;
+  driver_id?: string;
 }
 
 export function listRoutes(token: string | null) {
@@ -74,7 +101,32 @@ export function createRoute(
 }
 
 export function listAudit(token: string | null) {
-  return request<{ entries: ApiAuditEntry[] }>("/api/audit", token);
+  return request<AuditResponse>("/api/audit", token);
+}
+
+/** The caller's own driver link, or null. Any role may call this; it only reports themselves. */
+export function getMyDriver(token: string | null) {
+  return request<{ driver: ApiDriver | null }>("/api/drivers/me", token);
+}
+
+/** org_admin only — the org_management permission gates all three below. */
+export function listDrivers(token: string | null) {
+  return request<{ drivers: ApiDriver[] }>("/api/drivers", token);
+}
+
+export function createDriver(
+  token: string | null,
+  body: { driver_id: string; name?: string; clerk_user_id?: string },
+) {
+  return request<ApiDriver>("/api/drivers", token, { method: "POST", body: JSON.stringify(body) });
+}
+
+/** Pass `clerk_user_id: null` to unlink. */
+export function linkDriver(token: string | null, driverId: string, clerkUserId: string | null) {
+  return request<ApiDriver>(`/api/drivers/${encodeURIComponent(driverId)}/link`, token, {
+    method: "POST",
+    body: JSON.stringify({ clerk_user_id: clerkUserId }),
+  });
 }
 
 /** LocalFilePdfStore returns a relative /pdfs/... URL — apps/api serves it, not this app. */

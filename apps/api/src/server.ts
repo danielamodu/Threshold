@@ -6,6 +6,7 @@ import Fastify, { type FastifyInstance } from 'fastify';
 import { requireAuth } from './auth.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import { registerDemoRoutes } from './routes/demo.js';
+import { registerDriverRoutes } from './routes/drivers.js';
 import { registerRouteRoutes } from './routes/routes.js';
 
 /**
@@ -72,6 +73,7 @@ export async function buildServer(): Promise<FastifyInstance> {
   if (connectionString) {
     registerRouteRoutes(app, { connectionString });
     registerAuditRoutes(app, { connectionString });
+    registerDriverRoutes(app, { connectionString });
   }
 
   // Serves whatever LocalFilePdfStore (see @threshold/output) has written to

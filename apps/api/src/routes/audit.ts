@@ -3,22 +3,30 @@
  * follow-up). Reads the real `audit_log` table via PostgresAuditSink —
  * nothing synthetic, nothing in-memory.
  *
- * KNOWN GAP, flagged rather than papered over: the `driver` role's
- * permission is `read: 'own'` (packages/accounts/src/roles.ts) — scoped to
- * records for THIS driver only. Enforcing that requires knowing which
- * `driver_id` row corresponds to the signed-in Clerk user, and no such link
- * exists yet: `public.drivers` (db/migrations/20260821220000_org_multitenancy.sql)
- * has no `clerk_user_id` column, and nothing assigns one at sign-up or
- * invite time. Rather than guess (e.g. matching on name) or silently show
- * every driver's records, a driver session gets an honestly empty feed until
- * that identity link exists. Building it is a real, separate piece of work —
- * likely a `drivers.clerk_user_id` column plus an assignment step in the org
- * invite flow — not something to invent unasked inside this wiring pass.
+ * The `driver` role's permission is `read: 'own'`
+ * (packages/accounts/src/roles.ts) — scoped to records for THIS driver only.
+ * Enforcing that needs to know which `driver_id` row belongs to the signed-in
+ * Clerk user, which is what `drivers.clerk_user_id` now provides
+ * (db/migrations/20260822140000_drivers_clerk_user_id.sql). A driver request
+ * resolves that link, then pushes the filter down into SQL via
+ * `readForOrg(orgId, { driverId })` — which joins through the `routes` table
+ * rather than scanning jsonb payloads, and which already existed waiting for
+ * a caller.
+ *
+ * An unlinked driver (no `clerk_user_id` matching their session) still gets
+ * an empty feed, but the response says so with `driver_unlinked: true` rather
+ * than being indistinguishable from "you have no records". That distinction
+ * matters operationally: the first is an org_admin who hasn't run the
+ * assignment step yet (POST /api/drivers/:driver_id/link), the second is a
+ * correctly-configured driver whose routes simply haven't produced anything.
+ * Falling back to the org-wide feed here would leak every other driver's
+ * records, so unlinked stays empty — it is a configuration gap to surface,
+ * not a permission to widen.
  */
 
 import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { PostgresAuditSink } from '@threshold/audit';
-import { canRead } from '@threshold/accounts';
+import { DriverStore, canRead } from '@threshold/accounts';
 import { requireAuth } from '../auth.js';
 
 export function registerAuditRoutes(
@@ -27,13 +35,16 @@ export function registerAuditRoutes(
 ): void {
   const authenticate = options.authenticate ?? requireAuth;
   const sink = new PostgresAuditSink({ connectionString: options.connectionString });
+  const drivers = new DriverStore(options.connectionString);
   app.addHook('onClose', async () => {
     await sink.close();
+    await drivers.close();
   });
 
   app.get('/api/audit', { preHandler: [authenticate] }, async (request, reply) => {
     const role = request.auth?.role;
     const orgId = request.auth?.orgId;
+    const userId = request.auth?.userId;
 
     if (!orgId) {
       reply.code(403).send({ error: 'No active organization on this session.' });
@@ -51,8 +62,23 @@ export function registerAuditRoutes(
     }
 
     if (access === 'own') {
-      // See header — no clerk_user_id -> driver_id link exists yet.
-      reply.send({ entries: [] });
+      if (!userId) {
+        // requireAuth always sets userId from the token's `sub`, so this is
+        // unreachable in production — guarded rather than asserted because an
+        // injected test authenticate could omit it, and the failure mode of
+        // treating a missing user id as "match anything" is a data leak.
+        reply.code(403).send({ error: 'No user identity on this session.' });
+        return;
+      }
+
+      const driver = await drivers.getByClerkUser(orgId, userId);
+      if (!driver) {
+        reply.send({ entries: [], driver_unlinked: true });
+        return;
+      }
+
+      const entries = await sink.readForOrg(orgId, { driverId: driver.driver_id });
+      reply.send({ entries, driver_id: driver.driver_id });
       return;
     }
 
