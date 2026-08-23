@@ -28,10 +28,14 @@ export interface ClaimDraftOptions {
 }
 
 /**
- * Only called when `recommended_action === 'claim_draft'` (i.e. a breach) —
- * mirrors the exit condition's framing of "one single heat-spike event
- * produces both a real compliance PDF and a real claim draft," not an
- * artifact for every nominal reading.
+ * Called once per breach EPISODE, not once per breaching reading — the caller
+ * gates on `CargoEvaluation.breach_episode_started` (the crossing), not on
+ * `recommended_action === 'claim_draft'` (which stays true for every reading
+ * after it, since exposure never decays). See risk-pipeline.ts's header.
+ *
+ * Either way this mirrors the exit condition's framing of "one single
+ * heat-spike event produces both a real compliance PDF and a real claim
+ * draft," not an artifact for every nominal reading.
  */
 export function generateClaimDraft(
   assessment: CargoRiskAssessment,
