@@ -189,6 +189,9 @@ export class RiskPipeline {
     this.bus.subscribe('cargo-risk', async (event) => {
       const evaluation = this.cargo.evaluate(event);
       let finalAssessment = evaluation.assessment;
+      // §11 addition: held out here only so it can be appended to the sink
+      // AFTER the assessment below. Stays null for every non-breach event.
+      let loggableDraft: ClaimDraft | null = null;
 
       if (evaluation.assessment.recommended_action === 'claim_draft') {
         const draft = generateClaimDraft(evaluation.assessment, event.route_id, {
@@ -198,6 +201,7 @@ export class RiskPipeline {
         const exported_pdf_url = await this.pdfStore.save(`claim-${draft.claim_draft_id}.pdf`, pdfBytes);
         const finalDraft = { ...draft, exported_pdf_url };
         this.claimDrafts.push(finalDraft);
+        loggableDraft = finalDraft;
         finalAssessment = { ...evaluation.assessment, claim_draft_id: finalDraft.claim_draft_id };
       } else if (evaluation.assessment.recommended_action === 'reroute') {
         // §3 types this field as the deliberately loose `object | null` —
@@ -220,6 +224,22 @@ export class RiskPipeline {
         payload: finalAssessment,
         occurred_at: event.timestamp,
       });
+
+      // §11 addition, strictly after the assessment append above: the draft's
+      // `assessment_id` must never point at an assessment that isn't in the
+      // log yet — the same ordering discipline handle() applies when it logs
+      // the event before either evaluation. Nothing above this line changed
+      // behaviour; a non-breach event appends exactly what it always did.
+      if (loggableDraft) {
+        await this.sink.append({
+          entry_type: 'claim_draft',
+          event_id: event.event_id,
+          route_id: event.route_id,
+          org_id: this.org_id,
+          payload: loggableDraft,
+          occurred_at: loggableDraft.generated_at,
+        });
+      }
     });
   }
 

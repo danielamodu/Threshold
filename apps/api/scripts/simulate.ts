@@ -189,7 +189,7 @@ async function main(): Promise<number> {
     );
   }
   line();
-  console.log(`${entries.length} entries for ${events.length} events (1 event + 2 evaluations + 1 decision each).`);
+  console.log(`${entries.length} entries for ${events.length} events (1 event + 2 evaluations + 1 decision each, plus 1 claim draft per breach).`);
   console.log(`${claimDrafts.length} claim draft(s) generated (breach events only).`);
   if (webhookEmitter instanceof RecordingWebhookEmitter) {
     console.log(`${webhookEmitter.deliveries.length} webhook payload(s) recorded (nothing sent — no --webhook-url).`);

@@ -25,7 +25,7 @@
 -- if ever run with --commit or straight through psql.
 --
 -- Every assertion below fails loudly. A clean run ends at section 11
--- (14 sections counting 0, 1b, and 6b; 9 emit an explicit PASS notice, the
+-- (15 sections counting 0, 1b, 6b, and 6c; 9 emit an explicit PASS notice, the
 -- rest assert by succeeding or by returning rows for inspection).
 
 \set ON_ERROR_STOP on
@@ -129,7 +129,28 @@ exception
   when foreign_key_violation then raise notice 'PASS: audit_log.org_id foreign key enforced';
 end $$;
 
--- Sections 7-9 target the row this suite itself inserted in section 1, by
+\echo '== 6c. claim_draft (§11) is accepted, and needs no rationale =='
+-- Additive fifth entry type. Asserts by succeeding: if the widened CHECK
+-- constraint were missing this value, ON_ERROR_STOP aborts the suite here.
+-- The absent rationale is the second half of the assertion — the
+-- rationale requirement must still apply to agent_decision ALONE, so a
+-- claim_draft with a null rationale has to insert cleanly.
+insert into public.audit_log (entry_type, event_id, route_id, org_id, payload, occurred_at)
+values (
+  'claim_draft',
+  '11111111-1111-1111-1111-111111111111',
+  'route-phx-01',
+  'org_test_fixture',
+  -- A complete ClaimDraft (packages/types/src/audit.ts), not a stub: the point
+  -- of persisting this entry type is `exported_pdf_url`, and
+  -- `estimated_loss_value` is null by design — nothing in Threshold carries
+  -- cargo valuation data. `org_id` stays out of the payload, in the envelope
+  -- column, exactly like every other entry type.
+  '{"claim_draft_id":"dddd1111-1111-1111-1111-111111111111","assessment_id":"bbbb1111-1111-1111-1111-111111111111","event_id":"11111111-1111-1111-1111-111111111111","route_id":"route-phx-01","cargo_class":"pharma","risk_level":"breach","cumulative_exposure_score":20.33,"threshold":12,"incident_summary":"Cumulative thermal exposure 20.33 degC-h exceeded the pharma threshold of 12 degC-h on route-phx-01.","estimated_loss_value":null,"estimated_loss_note":"Not estimated — Threshold holds no cargo valuation data.","generated_at":"2026-08-17T15:00:00Z","exported_pdf_url":"/pdfs/claim-dddd1111.pdf"}'::jsonb,
+  '2026-08-17T15:00:00Z'
+);
+
+
 -- event_id, NOT a hardcoded seq value. `seq` is a Postgres IDENTITY column,
 -- and identity sequences are non-transactional by design (nextval() advances
 -- permanently even inside a rolled-back transaction) — every prior run of
@@ -182,6 +203,7 @@ select event_id,
        count(*) filter (where entry_type = 'thermal_exposure_event') as events,
        count(*) filter (where entry_type = 'compliance_record')      as human_side,
        count(*) filter (where entry_type = 'cargo_risk_assessment')  as cargo_side,
+       count(*) filter (where entry_type = 'claim_draft')            as claim_drafts,
        count(*) filter (where entry_type = 'agent_decision')         as decisions
 from public.audit_log
 group by event_id;

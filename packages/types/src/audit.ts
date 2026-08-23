@@ -8,7 +8,9 @@
 
 import type {
   AgentDecision,
+  CargoClass,
   CargoRiskAssessment,
+  CargoRiskLevel,
   ComplianceRecord,
   ISO8601,
   ThermalExposureEvent,
@@ -16,21 +18,58 @@ import type {
 } from './contracts.js';
 
 /**
- * The three things §2 requires be logged. `compliance_record` and
- * `cargo_risk_assessment` together are the "evaluation" case.
+ * ⚠ PROPOSED SHAPE — not defined by §3, same status the spoilage curves in
+ * risk-engine carry: reasoned, not signed off. `CargoRiskAssessment.
+ * claim_draft_id` is the only thing §3 itself locks down; this is Phase 4's
+ * own design for what that id points at (packages/output/src/claim-draft.ts
+ * is still where it's generated — this is only the envelope-referenced
+ * shape, moved here so audit.ts can name it without @threshold/types
+ * depending on @threshold/output, which would be circular).
+ *
+ * `estimated_loss_value` stays `null`, always — nothing in this system
+ * carries cargo valuation data, and a fabricated dollar figure on a document
+ * titled "claim draft" would be actively wrong, not just incomplete.
+ *
+ * §11 product-shell wiring follow-up: added so a real, durable PDF link can
+ * exist for a claim draft at all — previously generateClaimDraft()'s result
+ * (exported_pdf_url included) was only ever a pipeline run's in-memory
+ * return value, never persisted anywhere queryable.
+ */
+export interface ClaimDraft {
+  claim_draft_id: string;
+  assessment_id: string;
+  event_id: string;
+  route_id: string;
+  cargo_class: CargoClass;
+  risk_level: CargoRiskLevel;
+  cumulative_exposure_score: number;
+  threshold: number;
+  incident_summary: string;
+  estimated_loss_value: null;
+  estimated_loss_note: string;
+  generated_at: string;
+  exported_pdf_url: string | null;
+}
+
+/**
+ * The three things §2 requires be logged, plus `claim_draft` (§11 addition —
+ * see ClaimDraft's header). `compliance_record` and `cargo_risk_assessment`
+ * together are the "evaluation" case.
  */
 export type AuditEntryType =
   | 'thermal_exposure_event'
   | 'compliance_record'
   | 'cargo_risk_assessment'
-  | 'agent_decision';
+  | 'agent_decision'
+  | 'claim_draft';
 
-/** Discriminated union binding each entry type to its §3 payload. */
+/** Discriminated union binding each entry type to its payload. */
 export type AuditPayload =
   | { entry_type: 'thermal_exposure_event'; payload: ThermalExposureEvent }
   | { entry_type: 'compliance_record'; payload: ComplianceRecord }
   | { entry_type: 'cargo_risk_assessment'; payload: CargoRiskAssessment }
-  | { entry_type: 'agent_decision'; payload: AgentDecision };
+  | { entry_type: 'agent_decision'; payload: AgentDecision }
+  | { entry_type: 'claim_draft'; payload: ClaimDraft };
 
 /** A row as written. `seq` and `recorded_at` are assigned by Postgres. */
 export type AuditLogEntry = AuditPayload & {

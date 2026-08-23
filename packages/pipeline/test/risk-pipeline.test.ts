@@ -123,6 +123,12 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
         case 'agent_decision':
           assertValid('logged AgentDecision', validateAgentDecision(entry.payload));
           break;
+        case 'claim_draft':
+          // Deliberately not validated against a §3 validator: ClaimDraft is
+          // Phase 4's own shape, not a §3 contract, so no validateClaimDraft
+          // exists to call. Named explicitly anyway so the exhaustiveness
+          // guarantee below stays real rather than silently absorbing it.
+          break;
         default:
           // Exhaustive: every entry_type Phase 3 can produce is handled above.
           // Reaching here means a new entry_type exists that this test (and
@@ -162,6 +168,8 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
     await pipeline.run(telemetry, readings);
     const entries = await sink.read();
 
+    // No spikes, so nothing breaches and no claim_draft is written — four per
+    // event is the floor for every run, and the exact count for a clean one.
     assert.equal(entries.length, 16); // 4 events x 4
     assert.equal(entries.filter((e) => e.entry_type === 'thermal_exposure_event').length, 4);
     assert.equal(entries.filter((e) => e.entry_type === 'compliance_record').length, 4);
@@ -188,14 +196,23 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
       assert.equal(cargoAtSpike.assessment.risk_level, 'breach');
       assert.equal(cargoAtSpike.assessment.recommended_action, 'claim_draft');
 
-      // And the correlation key ties all four rows together — the query the
-      // demo actually shows a judge.
+      // And the correlation key ties all the rows together — the query the
+      // demo actually shows a judge. Five, not four, for a BREACHING event:
+      // the §11 claim_draft row is correlated by the same event_id. A
+      // non-breaching event still writes exactly four (asserted above, in
+      // "writes exactly four entries per event").
       const eventId = events[spikeIndex]?.event_id;
       const related = (await sink.read()).filter((e) => e.event_id === eventId);
-      assert.equal(related.length, 4);
+      assert.equal(related.length, 5);
       assert.deepEqual(
         related.map((e) => e.entry_type).sort(),
-        ['agent_decision', 'cargo_risk_assessment', 'compliance_record', 'thermal_exposure_event'],
+        [
+          'agent_decision',
+          'cargo_risk_assessment',
+          'claim_draft',
+          'compliance_record',
+          'thermal_exposure_event',
+        ],
       );
     });
   });
@@ -376,11 +393,62 @@ describe('risk pipeline (Phase 2 exit condition)', () => {
     });
 
     it('no claim draft is generated for a non-breach event', async () => {
-      const { pipeline, telemetry, readings } = build(); // no spikes
+      const { sink, pipeline, telemetry, readings } = build(); // no spikes
       const { cargo, claimDrafts } = await pipeline.run(telemetry, readings);
 
       for (const { assessment } of cargo) assert.equal(assessment.claim_draft_id, null);
       assert.equal(claimDrafts.length, 0);
+      // §11: the new entry type must be genuinely additive — a run that never
+      // breaches appends exactly the entries it always did, and no claim_draft.
+      assert.equal(sink.ofType('claim_draft').length, 0);
+    });
+
+    it('persists the claim draft to the audit log, after the assessment that references it (§11)', async () => {
+      const { sink, pipeline, telemetry, readings, pdfStore } = build({ spikes: { 'wp-3': 20 } });
+      const { claimDrafts } = await pipeline.run(telemetry, readings);
+
+      const draft = claimDrafts[0];
+      assert.ok(draft, 'sanity: this spike must actually produce a draft');
+
+      // Every draft the run produced is in the append-only log, exactly once —
+      // deliberately not hardcoded to 1. Cumulative exposure stays above the
+      // threshold once crossed (see 'cargo exposure accumulates across the
+      // route'), so a spike at wp-3 keeps breaching at wp-4 as well. The
+      // invariant Task 1 introduces is one logged entry per generated draft,
+      // not one draft per run.
+      const logged = sink.ofType('claim_draft');
+      assert.equal(logged.length, claimDrafts.length);
+      assert.deepEqual(
+        logged.map((e) => e.payload.claim_draft_id).sort(),
+        claimDrafts.map((d) => d.claim_draft_id).sort(),
+        'the log must mirror the in-memory drafts exactly — none dropped, none duplicated',
+      );
+
+      const entry = logged.find((e) => e.payload.claim_draft_id === draft.claim_draft_id);
+      assert.ok(entry, 'the first draft must be findable in the log by its own id');
+      assert.equal(entry.event_id, draft.event_id);
+      assert.equal(entry.route_id, ROUTE.route_id);
+      assert.equal(entry.occurred_at, draft.generated_at);
+
+      // The whole point: a durable link the Claims surface can resolve, whose
+      // bytes are really there. Previously this URL existed only in memory.
+      assert.ok(entry.payload.exported_pdf_url, 'a persisted draft must carry its PDF URL');
+      assert.ok(pdfStore.get(pdfFilenameFromUrl(entry.payload.exported_pdf_url)));
+
+      // Ordering: `payload.assessment_id` must never reference an assessment
+      // that is not yet in the log.
+      const assessmentEntry = sink
+        .ofType('cargo_risk_assessment')
+        .find((e) => e.payload.assessment_id === entry.payload.assessment_id);
+      assert.ok(assessmentEntry, 'the referenced assessment must itself be logged');
+      assert.ok(
+        assessmentEntry.seq < entry.seq,
+        `claim_draft (seq ${entry.seq}) must be logged after its assessment (seq ${assessmentEntry.seq})`,
+      );
+
+      // A claim draft carries no rationale — that requirement is scoped to
+      // agent_decision alone, and this must not have widened it.
+      assert.equal(entry.rationale, null);
     });
 
     it('an elevated (not yet breaching) event gets a mocked reroute suggestion instead of a claim draft', async () => {
