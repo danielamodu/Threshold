@@ -16,7 +16,7 @@ export default function Home() {
     <main id="top" className={`threshold-app landing-page ${injected ? "threshold-app--injected" : ""}`}>
       <header className="landing-nav landing-container">
         <BrandMark />
-        <nav aria-label="Primary navigation"><a href="#product">Product</a><a href="#method">Method</a><a href="#integrity">Integrity</a></nav>
+        <nav aria-label="Primary navigation"><a href="/docs">Docs</a><a href="/legal">Legal</a><a href="/privacy">Privacy</a></nav>
         <a className="landing-nav__cta" href="#product">How it works <ArrowDownRight size={14} /></a>
       </header>
 
