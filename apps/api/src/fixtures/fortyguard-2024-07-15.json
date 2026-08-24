@@ -1,0 +1,47 @@
+{
+  "_meta": {
+    "description": "Cached real API response, fetched 2026-08-24 for morning 06:00 departure arc",
+    "date": "2024-07-15",
+    "route": "PHX-01",
+    "departs_at": "2024-07-15T06:00:00.000Z",
+    "leg_minutes": 60
+  },
+  "readings": {
+    "wp-1": {
+      "temp_stats": {
+        "mean": 31.1528345323741,
+        "max": 32.2868,
+        "min": 29.7448,
+        "stddev": 0.6996403892267377
+      },
+      "humidity_pct": 49.6
+    },
+    "wp-2": {
+      "temp_stats": {
+        "mean": 34.44706125,
+        "max": 34.8612,
+        "min": 34.3269,
+        "stddev": 0.11216384128437598
+      },
+      "humidity_pct": 45.7
+    },
+    "wp-3": {
+      "temp_stats": {
+        "mean": 36.62224963325183,
+        "max": 36.6422,
+        "min": 36.5807,
+        "stddev": 0.014990485744476815
+      },
+      "humidity_pct": 37.6
+    },
+    "wp-4": {
+      "temp_stats": {
+        "mean": 35.076370526315785,
+        "max": 35.1796,
+        "min": 34.9941,
+        "stddev": 0.04310322548505707
+      },
+      "humidity_pct": 43.7
+    }
+  }
+}

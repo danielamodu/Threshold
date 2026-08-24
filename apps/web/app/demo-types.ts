@@ -7,8 +7,8 @@
 
 import type { AgentDecision, CargoRiskAssessment, ComplianceRecord, ThermalExposureEvent } from '@threshold/types';
 
-/** Where the injector button applies its spike — the demo's one dramatic beat. */
-export const INJECTOR_WAYPOINT_ID = 'wp-3';
+/** Where the injector button applied its spike (REMOVED — real data breaches natively) */
+
 
 /**
  * Mirrors `@threshold/decision-layer`'s `SeverityBucket` by value, not by
@@ -37,6 +37,6 @@ export interface DemoRunResult {
   route_id: string;
   cargo_class: string;
   driver_id: string;
-  spiked: boolean;
   waypoints: DemoWaypoint[];
+
 }

@@ -21,9 +21,8 @@
  * for real).
  *
  *   npm run simulate --workspace @threshold/api
- *   npm run simulate --workspace @threshold/api -- --spike wp-3=20
- *   npm run simulate --workspace @threshold/api -- --spike wp-3=20 --auto-execute
- *   npm run simulate --workspace @threshold/api -- --spike wp-3=20 --webhook-url https://example.com/hook
+ *   npm run simulate --workspace @threshold/api -- --auto-execute
+ *   npm run simulate --workspace @threshold/api -- --webhook-url https://example.com/hook
  */
 
 import { resolve } from 'node:path';
@@ -31,7 +30,7 @@ import { InMemoryAuditSink, PostgresAuditSink, type AuditSink } from '@threshold
 import { HardCodedThresholdDecider } from '@threshold/decision-layer';
 import {
   SimulatedTelemetryAdapter,
-  SyntheticThermalReadingSource,
+  CachedFortyGuardThermalReadingSource,
   type RouteSpec,
 } from '@threshold/ingestion';
 import {
@@ -49,24 +48,13 @@ function arg(name: string): string | undefined {
   return i === -1 ? undefined : process.argv[i + 1];
 }
 
-/** --spike wp-3=20 --spike wp-4=6 */
-function parseSpikes(): Record<string, number> {
-  const out: Record<string, number> = {};
-  process.argv.forEach((a, i) => {
-    if (a !== '--spike') return;
-    const raw = process.argv[i + 1];
-    if (!raw) return;
-    const [id, delta] = raw.split('=');
-    if (id && delta && Number.isFinite(Number(delta))) out[id] = Number(delta);
-  });
-  return out;
-}
+// Spike logic removed — the real 2024-07-15 FortyGuard dataset natively trips thresholds.
 
 const ROUTE: RouteSpec = {
   route_id: 'route-phx-01',
   driver_id: 'driver-42',
   cargo_class: (arg('cargo') as RouteSpec['cargo_class']) ?? 'pharma',
-  departs_at: '2026-08-17T13:00:00.000Z',
+  departs_at: '2024-07-15T06:00:00.000Z',
   leg_minutes: 60,
   waypoints: [
     { waypoint_id: 'wp-1', lat: 33.4484, lng: -112.074 },
@@ -80,7 +68,6 @@ const line = (): void => console.log('─'.repeat(96));
 
 async function main(): Promise<number> {
   const persistUrl = arg('persist');
-  const spikes = parseSpikes();
   const degraded = (arg('no-humidity') ?? '').split(',').filter(Boolean);
   const allowAutoExecute = process.argv.includes('--auto-execute');
   const webhookUrl = arg('webhook-url');
@@ -118,21 +105,17 @@ async function main(): Promise<number> {
     webhookEmitter,
   });
   const telemetry = new SimulatedTelemetryAdapter({ route: ROUTE, seed: 1234 });
-  const readings = new SyntheticThermalReadingSource({
-    seed: 99,
-    spikes,
-    humidityUnavailableAt: degraded,
-  });
+  const fixturePath = resolve(import.meta.dirname, '../src/fixtures/fortyguard-2024-07-15.json');
+  const readings = new CachedFortyGuardThermalReadingSource(fixturePath);
 
   line();
-  console.log(`Threshold — simulated route  (SYNTHETIC DATA, no FortyGuard call)`);
+  console.log(`Threshold — simulated route  (CACHED REAL DATA, FortyGuard 2024-07-15)`);
   line();
   console.log(`  route        : ${ROUTE.route_id}`);
   console.log(`  cargo        : ${ROUTE.cargo_class}`);
   console.log(`  driver       : ${ROUTE.driver_id}`);
   console.log(`  waypoints    : ${ROUTE.waypoints.length} @ ${ROUTE.leg_minutes} min legs`);
-  console.log(`  spikes       : ${Object.keys(spikes).length ? JSON.stringify(spikes) : 'none'}`);
-  console.log(`  no humidity  : ${degraded.length ? degraded.join(', ') : 'none'}`);
+  console.log(`  no humidity  : ${degraded.length ? degraded.join(', ') : 'none'} (NOT SUPPORTED BY CACHED SOURCE YET)`);
   console.log(`  auto-execute : ${allowAutoExecute ? 'ALLOWED (--auto-execute)' : 'capped at draft (default)'}`);
   console.log(`  sink         : ${persistUrl ? 'Postgres (PERSISTED)' : 'in-memory'}`);
   console.log(`  PDFs         : ${pdfDir}`);

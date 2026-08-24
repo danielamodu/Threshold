@@ -46,15 +46,16 @@ const anchorDate = arg('anchor-date') ?? '2024-07-15';
 // API jobs (~2 minutes). This is a one-off proof run, not something to run
 // on every push.
 const ROUTE: RouteSpec = {
-  route_id: 'route-real-proof',
+  route_id: 'route-phx-01',
   driver_id: 'driver-42',
   cargo_class: 'pharma',
-  departs_at: '2026-08-18T13:00:00.000Z',
+  departs_at: '2026-08-17T13:00:00.000Z',
   leg_minutes: 60,
   waypoints: [
-    { waypoint_id: 'wp-1', lat: 40.7115, lng: -74.01 },
-    { waypoint_id: 'wp-2', lat: 40.72, lng: -74.0 },
-    { waypoint_id: 'wp-3', lat: 40.73, lng: -73.99 },
+    { waypoint_id: 'wp-1', lat: 33.4484, lng: -112.074 },
+    { waypoint_id: 'wp-2', lat: 33.5, lng: -112.1 },
+    { waypoint_id: 'wp-3', lat: 33.56, lng: -112.15 },
+    { waypoint_id: 'wp-4', lat: 33.62, lng: -112.2 },
   ],
 };
 

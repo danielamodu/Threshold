@@ -15,6 +15,7 @@
     "simulate:real": "tsx scripts/real-ingest.ts",
     "verify:org-scoped": "tsx scripts/verify-org-scoped.ts",
     "generate:real-pdfs": "tsx scripts/generate-real-pdfs.ts",
+    "revalidate-cache": "tsx scripts/revalidate-cache.ts",
     "clean": "node -e \"require('fs').rmSync('dist',{recursive:true,force:true})\""
   },
   "dependencies": {

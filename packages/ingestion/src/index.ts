@@ -5,3 +5,4 @@ export * from './normalize.js';
 export * from './prng.js';
 export * from './run.js';
 export * from './simulator.js';
+export * from './cached-source.js';

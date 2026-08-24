@@ -16,27 +16,25 @@ import { useCallback, useEffect, useState } from 'react';
 import { runDemoRoute } from './actions';
 import { RouteMap } from './components/RouteMap';
 import { Timeline } from './components/Timeline';
-import { INJECTOR_WAYPOINT_ID, type DemoRunResult } from './demo-types';
+import { type DemoRunResult } from './demo-types';
 
 export default function Page() {
   const [result, setResult] = useState<DemoRunResult | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
-  const load = useCallback((spike: boolean) => {
+  const load = useCallback(() => {
     setLoading(true);
     setError(null);
-    runDemoRoute(spike)
+    runDemoRoute()
       .then(setResult)
       .catch((e: unknown) => setError(e instanceof Error ? e.message : String(e)))
       .finally(() => setLoading(false));
   }, []);
 
   useEffect(() => {
-    load(false);
+    load();
   }, [load]);
-
-  const spiked = result?.spiked ?? false;
 
   return (
     <main style={{ maxWidth: '52rem', margin: '0 auto', padding: '3rem 1.5rem 4rem' }}>
@@ -54,28 +52,32 @@ export default function Page() {
       <h1 style={{ fontSize: '2rem', lineHeight: 1.15, margin: '0.5rem 0 0' }}>
         One heat event, two liability responses
       </h1>
-      <p style={{ color: 'var(--text-muted)', marginTop: '0.5rem' }}>
+      <p style={{ color: 'var(--text)', marginTop: '0.5rem', lineHeight: 1.5 }}>
+        This is unedited real data from a documented heat day (<strong>2024-07-15</strong>). 
+        Observe how the same telemetry inherently trips both driver compliance and cargo spoilage thresholds.
+      </p>
+      <p style={{ color: 'var(--text-muted)', marginTop: '1rem', fontSize: '0.9rem' }}>
         {result ? `${result.route_id} · ${result.cargo_class} · driver ${result.driver_id}` : 'Loading route…'}
       </p>
 
       <div style={{ margin: '1.75rem 0' }}>
         <button
           type="button"
-          onClick={() => load(!spiked)}
+          onClick={() => load()}
           disabled={loading}
           style={{
             padding: '0.75rem 1.5rem',
             fontSize: '1rem',
             fontWeight: 600,
-            color: spiked ? 'var(--surface)' : 'var(--text)',
-            background: spiked ? 'var(--risk-high)' : 'var(--surface-raised)',
-            border: `1px solid ${spiked ? 'var(--risk-high)' : 'var(--border)'}`,
+            color: 'var(--text)',
+            background: 'var(--surface-raised)',
+            border: '1px solid var(--border)',
             borderRadius: '0.6rem',
             cursor: loading ? 'wait' : 'pointer',
             opacity: loading ? 0.6 : 1,
           }}
         >
-          {loading ? 'Running…' : spiked ? 'Reset route' : `Inject heat spike at ${INJECTOR_WAYPOINT_ID}`}
+          {loading ? 'Running…' : 'Reload route'}
         </button>
       </div>
 

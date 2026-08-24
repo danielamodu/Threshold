@@ -27,20 +27,21 @@ import { InMemoryAuditSink } from '@threshold/audit';
 import { HardCodedThresholdDecider, cargoSeverity, complianceSeverity } from '@threshold/decision-layer';
 import {
   SimulatedTelemetryAdapter,
-  SyntheticThermalReadingSource,
+  CachedFortyGuardThermalReadingSource,
   type RouteSpec,
 } from '@threshold/ingestion';
 import { InMemoryPdfStore, RecordingWebhookEmitter } from '@threshold/output';
 import { RiskPipeline } from '@threshold/pipeline';
 import { RouteRegistry } from '@threshold/risk-engine';
 import { DEMO_ORG_ID } from '@threshold/accounts';
-import { INJECTOR_WAYPOINT_ID, type DemoRunResult, type DemoWaypoint } from './demo-types';
+import { type DemoRunResult, type DemoWaypoint } from './demo-types';
+import { resolve } from 'node:path';
 
 const DEMO_ROUTE: RouteSpec = {
   route_id: 'route-phx-01',
   driver_id: 'driver-42',
   cargo_class: 'pharma',
-  departs_at: '2026-08-17T13:00:00.000Z',
+  departs_at: '2024-07-15T06:00:00.000Z',
   leg_minutes: 60,
   waypoints: [
     { waypoint_id: 'wp-1', lat: 33.4484, lng: -112.074 },
@@ -50,14 +51,12 @@ const DEMO_ROUTE: RouteSpec = {
   ],
 };
 
-const INJECTOR_SPIKE_C = 20;
-
 /**
- * Runs the demo route once, synthetic data (never a real FortyGuard call —
- * this is a UI demo path, not Phase 0/1's verification harness). Pass
- * `spike: true` to inject the heat spike at {@link INJECTOR_WAYPOINT_ID}.
+ * Runs the demo route once. We use the real FortyGuard dataset cached
+ * because a live API hit would take 2+ minutes to respond.
+ * The 2024-07-15 data natively trips the human & cargo thresholds.
  */
-export async function runDemoRoute(spike: boolean): Promise<DemoRunResult> {
+export async function runDemoRoute(): Promise<DemoRunResult> {
   const sink = new InMemoryAuditSink();
   const routes = new RouteRegistry().register({
     route_id: DEMO_ROUTE.route_id,
@@ -76,10 +75,8 @@ export async function runDemoRoute(spike: boolean): Promise<DemoRunResult> {
   });
 
   const telemetry = new SimulatedTelemetryAdapter({ route: DEMO_ROUTE, seed: 1234 });
-  const readings = new SyntheticThermalReadingSource({
-    seed: 99,
-    spikes: spike ? { [INJECTOR_WAYPOINT_ID]: INJECTOR_SPIKE_C } : {},
-  });
+  const fixturePath = resolve(process.cwd(), '../../apps/api/src/fixtures/fortyguard-2024-07-15.json');
+  const readings = new CachedFortyGuardThermalReadingSource(fixturePath);
 
   const { events, compliance, cargo, decisions } = await pipeline.run(telemetry, readings);
 
@@ -110,7 +107,6 @@ export async function runDemoRoute(spike: boolean): Promise<DemoRunResult> {
     route_id: DEMO_ROUTE.route_id,
     cargo_class: DEMO_ROUTE.cargo_class,
     driver_id: DEMO_ROUTE.driver_id,
-    spiked: spike,
     waypoints,
   };
 }

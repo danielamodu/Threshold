@@ -3,7 +3,7 @@ import { InMemoryAuditSink } from '@threshold/audit';
 import { HardCodedThresholdDecider, cargoSeverity, complianceSeverity } from '@threshold/decision-layer';
 import {
   SimulatedTelemetryAdapter,
-  SyntheticThermalReadingSource,
+  CachedFortyGuardThermalReadingSource,
   type RouteSpec,
 } from '@threshold/ingestion';
 import { InMemoryPdfStore, RecordingWebhookEmitter } from '@threshold/output';
@@ -29,7 +29,7 @@ const DEMO_ROUTE: RouteSpec = {
   route_id: 'route-phx-01',
   driver_id: 'driver-42',
   cargo_class: 'pharma',
-  departs_at: '2026-08-17T13:00:00.000Z',
+  departs_at: '2024-07-15T06:00:00.000Z',
   leg_minutes: 60,
   waypoints: [
     { waypoint_id: 'wp-1', lat: 33.4484, lng: -112.074 },
@@ -39,23 +39,9 @@ const DEMO_ROUTE: RouteSpec = {
   ],
 };
 
-const DEFAULT_SPIKE_WAYPOINT = 'wp-3';
-const DEFAULT_SPIKE_C = 20;
+import { resolve } from 'node:path';
 
-interface SimulateBody {
-  /** True applies a spike at spike_waypoint_id. False (default) is the clean baseline. */
-  spike?: boolean;
-  /** Which waypoint gets the spike. Defaults to wp-3. Must be one of the four ids above. */
-  spike_waypoint_id?: string;
-  /** Degrees C added at that waypoint. Defaults to 20. */
-  spike_amount_c?: number;
-}
-
-async function runDemoRoute(options: {
-  spike: boolean;
-  spikeWaypointId: string;
-  spikeAmountC: number;
-}) {
+async function runDemoRoute() {
   const sink = new InMemoryAuditSink();
   const routes = new RouteRegistry().register({
     route_id: DEMO_ROUTE.route_id,
@@ -74,10 +60,8 @@ async function runDemoRoute(options: {
   });
 
   const telemetry = new SimulatedTelemetryAdapter({ route: DEMO_ROUTE, seed: 1234 });
-  const readings = new SyntheticThermalReadingSource({
-    seed: 99,
-    spikes: options.spike ? { [options.spikeWaypointId]: options.spikeAmountC } : {},
-  });
+  const fixturePath = resolve(import.meta.dirname, '../fixtures/fortyguard-2024-07-15.json');
+  const readings = new CachedFortyGuardThermalReadingSource(fixturePath);
 
   const { events, compliance, cargo, decisions } = await pipeline.run(telemetry, readings);
 
@@ -108,8 +92,6 @@ async function runDemoRoute(options: {
     route_id: DEMO_ROUTE.route_id,
     cargo_class: DEMO_ROUTE.cargo_class,
     driver_id: DEMO_ROUTE.driver_id,
-    spiked: options.spike,
-    spike_waypoint_id: options.spike ? options.spikeWaypointId : null,
     waypoints,
   };
 }
@@ -129,20 +111,8 @@ export function registerDemoRoutes(app: FastifyInstance): void {
    * decision, and pre-computed severity buckets for coloring. Synthetic data
    * only — this is the demo path, not Phase 0/1's real-API harness.
    */
-  app.post<{ Body: SimulateBody }>('/api/simulate', async (request, reply) => {
-    const body = request.body ?? {};
-    const spike = body.spike ?? false;
-    const spikeWaypointId = body.spike_waypoint_id ?? DEFAULT_SPIKE_WAYPOINT;
-    const spikeAmountC = body.spike_amount_c ?? DEFAULT_SPIKE_C;
-
-    const validIds = DEMO_ROUTE.waypoints.map((w) => w.waypoint_id);
-    if (!validIds.includes(spikeWaypointId)) {
-      return reply.code(400).send({
-        error: `spike_waypoint_id must be one of ${validIds.join(', ')}`,
-      });
-    }
-
-    const result = await runDemoRoute({ spike, spikeWaypointId, spikeAmountC });
+  app.post('/api/simulate', async () => {
+    const result = await runDemoRoute();
     return result;
   });
 }
