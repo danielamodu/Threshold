@@ -7,7 +7,7 @@ import ErrorBoundary from "./components/ErrorBoundary";
 import { ThemeProvider } from "./contexts/ThemeContext";
 import Home from "./pages/Home";
 import { DocsPage, LegalPage, PrivacyPage } from "./pages/InfoPages";
-import { OrganizationEntryPage, SignInPage, SignUpPage, VerifyPage } from "./pages/AuthPages";
+import { OrganizationEntryPage, SSOCallbackPage, SignInPage, SignUpPage, VerifyPage } from "./pages/AuthPages";
 import { ProductApp } from "./pages/ProductApp";
 import { RequireRole } from "./components/RequireRole";
 
@@ -29,6 +29,7 @@ function Router() {
       <Route path="/sign-in" component={SignInPage} />
       <Route path="/sign-up" component={SignUpPage} />
       <Route path="/verify" component={VerifyPage} />
+      <Route path="/sso-callback" component={SSOCallbackPage} />
       <Route path="/organization" component={OrganizationEntryPage} />
       <Route path="/app/:role/:page/:id" component={GuardedProductApp} />
       <Route path="/app/:role/:page" component={GuardedProductApp} />
