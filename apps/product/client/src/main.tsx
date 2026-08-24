@@ -12,7 +12,7 @@ if (!clerkPublishableKey) {
 createRoot(document.getElementById("root")!).render(
   <ClerkProvider
     publishableKey={clerkPublishableKey}
-    clerkJSUrl="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+    proxyUrl="/__clerk"
     afterSignOutUrl="/"
   >
     <App />
