@@ -53,7 +53,7 @@ async function main() {
 
   for (const item of SCHEDULE) {
     const reading = fixtureReadings[item.waypoint_id];
-    if (reading && reading.temp_stats.max < 38) {
+    if (reading && reading.temp_stats && reading.temp_stats.max < 38) {
       console.log(`Using existing reading for ${item.waypoint_id} @ ${item.timestamp.slice(11, 16)}: max=${reading.temp_stats.max}°C`);
       continue;
     }
