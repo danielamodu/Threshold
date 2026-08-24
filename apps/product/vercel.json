@@ -6,10 +6,6 @@
   "outputDirectory": "dist/public",
   "rewrites": [
     {
-      "source": "/__clerk/:path*",
-      "destination": "https://clerk.trythreshold.vercel.app/:path*"
-    },
-    {
       "source": "/api/:path*",
       "destination": "http://44.201.16.48:8080/api/:path*"
     },

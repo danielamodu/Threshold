@@ -10,11 +10,7 @@ if (!clerkPublishableKey) {
 }
 
 createRoot(document.getElementById("root")!).render(
-  <ClerkProvider
-    publishableKey={clerkPublishableKey}
-    proxyUrl="/__clerk"
-    afterSignOutUrl="/"
-  >
+  <ClerkProvider publishableKey={clerkPublishableKey} afterSignOutUrl="/">
     <App />
   </ClerkProvider>,
 );
