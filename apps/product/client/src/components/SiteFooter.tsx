@@ -13,9 +13,9 @@ const footerGroups = [
 ] as const;
 
 const socialLinks = [
-  { label: "X / Twitter", href: "https://x.com/", icon: Twitter },
-  { label: "GitHub", href: "https://github.com/", icon: Github },
-  { label: "Email", href: "mailto:hello@threshold.systems", icon: Mail },
+  { label: "X / Twitter", href: "https://x.com/szrxbt", icon: Twitter },
+  { label: "GitHub", href: "https://github.com/Threshold", icon: Github },
+  { label: "Email", href: "mailto:theamebonetwork@gmail.com", icon: Mail },
 ] as const;
 
 export function SiteFooter() {
