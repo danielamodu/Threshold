@@ -26,7 +26,7 @@ function InfoPage({ eyebrow, title, lead, children }: InfoPageProps) {
   );
 }
 
-const logoUrl = "/manus-storage/threshold-gate-mark_98978d28.png";
+const logoUrl = "/assets/threshold-gate-mark.png";
 
 export function DocsPage() {
   return (
