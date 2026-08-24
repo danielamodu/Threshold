@@ -1,166 +1,131 @@
 /**
- * GOOGLE MAPS FRONTEND INTEGRATION - ESSENTIAL GUIDE
+ * RouteMap / MapView — raw-SVG waypoint projection component.
  *
- * USAGE FROM PARENT COMPONENT:
- * ======
- *
- * const mapRef = useRef<google.maps.Map | null>(null);
- *
- * <MapView
- *   initialCenter={{ lat: 40.7128, lng: -74.0060 }}
- *   initialZoom={15}
- *   onMapReady={(map) => {
- *     mapRef.current = map; // Store to control map from parent anytime, google map itself is in charge of the re-rendering, not react state.
- * </MapView>
- *
- * ======
- * Available Libraries and Core Features:
- * -------------------------------
- * 📍 MARKER (from `marker` library)
- * - Attaches to map using { map, position }
- * new google.maps.marker.AdvancedMarkerElement({
- *   map,
- *   position: { lat: 37.7749, lng: -122.4194 },
- *   title: "San Francisco",
- * });
- *
- * -------------------------------
- * 🏢 PLACES (from `places` library)
- * - Does not attach directly to map; use data with your map manually.
- * const place = new google.maps.places.Place({ id: PLACE_ID });
- * await place.fetchFields({ fields: ["displayName", "location"] });
- * map.setCenter(place.location);
- * new google.maps.marker.AdvancedMarkerElement({ map, position: place.location });
- *
- * -------------------------------
- * 🧭 GEOCODER (from `geocoding` library)
- * - Standalone service; manually apply results to map.
- * const geocoder = new google.maps.Geocoder();
- * geocoder.geocode({ address: "New York" }, (results, status) => {
- *   if (status === "OK" && results[0]) {
- *     map.setCenter(results[0].geometry.location);
- *     new google.maps.marker.AdvancedMarkerElement({
- *       map,
- *       position: results[0].geometry.location,
- *     });
- *   }
- * });
- *
- * -------------------------------
- * 📐 GEOMETRY (from `geometry` library)
- * - Pure utility functions; not attached to map.
- * const dist = google.maps.geometry.spherical.computeDistanceBetween(p1, p2);
- *
- * -------------------------------
- * 🛣️ ROUTES (from `routes` library)
- * - Combines DirectionsService (standalone) + DirectionsRenderer (map-attached)
- * const directionsService = new google.maps.DirectionsService();
- * const directionsRenderer = new google.maps.DirectionsRenderer({ map });
- * directionsService.route(
- *   { origin, destination, travelMode: "DRIVING" },
- *   (res, status) => status === "OK" && directionsRenderer.setDirections(res)
- * );
- *
- * -------------------------------
- * 🌦️ MAP LAYERS (attach directly to map)
- * - new google.maps.TrafficLayer().setMap(map);
- * - new google.maps.TransitLayer().setMap(map);
- * - new google.maps.BicyclingLayer().setMap(map);
- *
- * -------------------------------
- * ✅ SUMMARY
- * - “map-attached” → AdvancedMarkerElement, DirectionsRenderer, Layers.
- * - “standalone” → Geocoder, DirectionsService, DistanceMatrixService, ElevationService.
- * - “data-only” → Place, Geometry utilities.
+ * Deliberately avoids external cartographic tile dependencies (Mapbox/Google Maps API)
+ * to ensure robust, credential-free execution without third-party proxies.
+ * Reuses the proven SVG projection pattern from Phase 5 (`apps/web` RouteMap.tsx).
  */
 
-/// <reference types="@types/google.maps" />
-
-import { useEffect, useRef } from "react";
-import { usePersistFn } from "@/hooks/usePersistFn";
 import { cn } from "@/lib/utils";
 
-declare global {
-  interface Window {
-    google?: typeof google;
-  }
+export type SeverityBucket = "low" | "mid" | "high";
+
+export interface MapWaypoint {
+  waypoint_id: string;
+  lat: number;
+  lng: number;
+  temp_c?: number;
+  human_severity?: SeverityBucket;
+  cargo_severity?: SeverityBucket;
 }
 
-const API_KEY = import.meta.env.VITE_GOOGLE_MAPS_API_KEY || "";
+const DEFAULT_WAYPOINTS: MapWaypoint[] = [
+  { waypoint_id: "wp-1", lat: 33.4484, lng: -112.074, temp_c: 28.5, human_severity: "low", cargo_severity: "low" },
+  { waypoint_id: "wp-2", lat: 33.5, lng: -112.1, temp_c: 33.4, human_severity: "low", cargo_severity: "low" },
+  { waypoint_id: "wp-3", lat: 33.56, lng: -112.15, temp_c: 39.4, human_severity: "high", cargo_severity: "high" },
+  { waypoint_id: "wp-4", lat: 33.62, lng: -112.2, temp_c: 38.8, human_severity: "mid", cargo_severity: "high" },
+];
 
-function loadMapScript(): Promise<void> {
-  return new Promise((resolve, reject) => {
-    if (!API_KEY) {
-      console.warn("VITE_GOOGLE_MAPS_API_KEY is missing. Google Maps will not load.");
-      resolve();
-      return;
-    }
-    if (window.google?.maps) {
-      resolve();
-      return;
-    }
-    const existingScript = document.getElementById("google-maps-script");
-    if (existingScript) {
-      existingScript.addEventListener("load", () => resolve());
-      existingScript.addEventListener("error", (e) => reject(e));
-      return;
-    }
-    const script = document.createElement("script");
-    script.id = "google-maps-script";
-    script.src = `https://maps.googleapis.com/maps/api/js?key=${API_KEY}&v=weekly&libraries=marker,places,geocoding,geometry`;
-    script.async = true;
-    script.onload = () => {
-      resolve();
-    };
-    script.onerror = (err) => {
-      console.error("Failed to load Google Maps script from maps.googleapis.com", err);
-      reject(err);
-    };
-    document.head.appendChild(script);
-  });
+/** Worse of two severities, by rank — mirrors decision-layer's `higher()` by value. */
+function higher(a: SeverityBucket = "low", b: SeverityBucket = "low"): SeverityBucket {
+  const rank: Record<SeverityBucket, number> = { low: 0, mid: 1, high: 2 };
+  return rank[a] >= rank[b] ? a : b;
 }
 
-interface MapViewProps {
+const WIDTH = 640;
+const HEIGHT = 260;
+const PAD = 40;
+
+const SEVERITY_COLOR: Record<SeverityBucket, string> = {
+  low: "var(--nominal, #89b7ae)",
+  mid: "var(--driver, #e9a36f)",
+  high: "var(--cargo, #ff4b2b)",
+};
+
+function project(points: { lat: number; lng: number }[]): { x: number; y: number }[] {
+  const lats = points.map((p) => p.lat);
+  const lngs = points.map((p) => p.lng);
+  const minLat = Math.min(...lats);
+  const maxLat = Math.max(...lats);
+  const minLng = Math.min(...lngs);
+  const maxLng = Math.max(...lngs);
+  const latSpan = maxLat - minLat || 1;
+  const lngSpan = maxLng - minLng || 1;
+
+  return points.map((p) => ({
+    x: PAD + ((p.lng - minLng) / lngSpan) * (WIDTH - 2 * PAD),
+    y: HEIGHT - PAD - ((p.lat - minLat) / latSpan) * (HEIGHT - 2 * PAD),
+  }));
+}
+
+export interface RouteMapProps {
+  waypoints?: MapWaypoint[];
   className?: string;
-  initialCenter?: google.maps.LatLngLiteral;
-  initialZoom?: number;
-  onMapReady?: (map: google.maps.Map) => void;
 }
 
-export function MapView({
-  className,
-  initialCenter = { lat: 37.7749, lng: -122.4194 },
-  initialZoom = 12,
-  onMapReady,
-}: MapViewProps) {
-  const mapContainer = useRef<HTMLDivElement>(null);
-  const map = useRef<google.maps.Map | null>(null);
-
-  const init = usePersistFn(async () => {
-    await loadMapScript();
-    if (!mapContainer.current) {
-      console.error("Map container not found");
-      return;
-    }
-    map.current = new window.google.maps.Map(mapContainer.current, {
-      zoom: initialZoom,
-      center: initialCenter,
-      mapTypeControl: true,
-      fullscreenControl: true,
-      zoomControl: true,
-      streetViewControl: true,
-      mapId: "DEMO_MAP_ID",
-    });
-    if (onMapReady) {
-      onMapReady(map.current);
-    }
-  });
-
-  useEffect(() => {
-    init();
-  }, [init]);
+export function RouteMap({ waypoints = DEFAULT_WAYPOINTS, className }: RouteMapProps) {
+  const activeWaypoints = waypoints.length > 0 ? waypoints : DEFAULT_WAYPOINTS;
+  const points = project(activeWaypoints);
+  const path = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
 
   return (
-    <div ref={mapContainer} className={cn("w-full h-[500px]", className)} />
+    <div className={cn("w-full overflow-hidden rounded-lg border border-[var(--line,#2a2a2a)] bg-[var(--card,#181816)] p-4", className)}>
+      <svg
+        viewBox={`0 0 ${WIDTH} ${HEIGHT}`}
+        role="img"
+        aria-label="Route map, waypoints coloured by risk state"
+        style={{ width: "100%", height: "auto", display: "block" }}
+      >
+        <path d={path} fill="none" stroke="var(--border, rgba(242, 238, 230, 0.16))" strokeWidth={2} />
+
+        {activeWaypoints.map((wp, i) => {
+          const point = points[i];
+          if (!point) return null;
+          const severity = higher(wp.human_severity, wp.cargo_severity);
+          const color = SEVERITY_COLOR[severity];
+          const temp = wp.temp_c ?? 0;
+          const isSpike = temp > 38;
+
+          return (
+            <g key={wp.waypoint_id}>
+              {isSpike && (
+                <circle cx={point.x} cy={point.y} r={16} fill={color} opacity={0.25}>
+                  <animate attributeName="r" values="12;20;12" dur="1.6s" repeatCount="indefinite" />
+                  <animate attributeName="opacity" values="0.35;0.05;0.35" dur="1.6s" repeatCount="indefinite" />
+                </circle>
+              )}
+              <circle cx={point.x} cy={point.y} r={9} fill={color} stroke="var(--card, #181816)" strokeWidth={2} />
+              <text
+                x={point.x}
+                y={point.y - 16}
+                textAnchor="middle"
+                fontSize={11}
+                fill="var(--muted-foreground, #9e9a91)"
+                fontFamily="var(--font-mono, monospace)"
+              >
+                {wp.waypoint_id}
+              </text>
+              {wp.temp_c !== undefined && (
+                <text
+                  x={point.x}
+                  y={point.y + 26}
+                  textAnchor="middle"
+                  fontSize={11}
+                  fill="var(--foreground, #f2eee6)"
+                  fontWeight={600}
+                >
+                  {wp.temp_c.toFixed(1)}°C
+                </text>
+              )}
+            </g>
+          );
+        })}
+      </svg>
+    </div>
   );
+}
+
+/** Legacy alias export for MapView compatibility */
+export function MapView(props: { className?: string; initialCenter?: { lat: number; lng: number }; initialZoom?: number }) {
+  return <RouteMap className={props.className} />;
 }
