@@ -10,7 +10,11 @@ if (!clerkPublishableKey) {
 }
 
 createRoot(document.getElementById("root")!).render(
-  <ClerkProvider publishableKey={clerkPublishableKey} afterSignOutUrl="/">
+  <ClerkProvider
+    publishableKey={clerkPublishableKey}
+    clerkJSUrl="https://cdn.jsdelivr.net/npm/@clerk/clerk-js@5/dist/clerk.browser.js"
+    afterSignOutUrl="/"
+  >
     <App />
   </ClerkProvider>,
 );
