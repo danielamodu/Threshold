@@ -1,0 +1,47 @@
+name: Deploy API
+
+# Deploys the Fastify backend to the EC2 box on every push to main that could
+# affect it. Exists because the 2026-08-25 incident — org-scoped routes 404ing
+# in production for days — was a stale deployment: code merged to main, server
+# never updated, nothing flagged it. This makes staleness impossible to miss:
+# every relevant push now lands on the server or the workflow run fails red.
+
+on:
+  push:
+    branches: [main]
+    paths:
+      - "apps/api/**"
+      - "packages/**"
+      - "db/migrations/**"
+      - "package.json"
+      - "package-lock.json"
+      - ".github/workflows/deploy-api.yml"
+
+concurrency:
+  group: deploy-api
+  cancel-in-progress: false
+
+jobs:
+  deploy:
+    name: Pull, build, restart on EC2
+    runs-on: ubuntu-latest
+    steps:
+      - name: Deploy over SSH
+        uses: appleboy/ssh-action@v1.2.2
+        with:
+          host: ${{ secrets.EC2_HOST }}
+          username: ${{ secrets.EC2_USER }}
+          key: ${{ secrets.EC2_SSH_KEY }}
+          command_timeout: 10m
+          script: |
+            set -euo pipefail
+            cd /opt/threshold
+            git pull --ff-only
+            npm install --no-audit --no-fund
+            npm run build:packages
+            npm run build --workspace @threshold/api
+            pm2 restart threshold-api --update-env
+            sleep 3
+            curl -fsS http://localhost:8080/health > /dev/null
+            curl -fsS http://localhost:8080/ready
+            echo "deploy ok"
