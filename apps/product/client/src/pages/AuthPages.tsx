@@ -71,11 +71,18 @@ function firstClerkErrorMessage(error: unknown): string {
 
 export function SignInPage() {
   const [, setLocation] = useLocation();
+  const { isSignedIn } = useAuth();
   const { isLoaded, signIn, setActive } = useSignIn();
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isSignedIn) {
+      setLocation("/organization");
+    }
+  }, [isSignedIn, setLocation]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -91,7 +98,12 @@ export function SignInPage() {
         setError("This account needs an additional verification step this form doesn't support yet.");
       }
     } catch (err) {
-      setError(firstClerkErrorMessage(err));
+      const msg = firstClerkErrorMessage(err);
+      if (msg.toLowerCase().includes("session already exists")) {
+        setLocation("/organization");
+        return;
+      }
+      setError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -107,7 +119,12 @@ export function SignInPage() {
         redirectUrlComplete: "/organization",
       });
     } catch (err) {
-      setError(firstClerkErrorMessage(err));
+      const msg = firstClerkErrorMessage(err);
+      if (msg.toLowerCase().includes("session already exists")) {
+        setLocation("/organization");
+        return;
+      }
+      setError(msg);
     }
   }
 
@@ -149,7 +166,7 @@ export function SignInPage() {
             <a href="/sign-up">Need an account?</a>
           </div>
           <button type="submit" disabled={!isLoaded || submitting}>
-            {submitting ? "Signing in…" : "Continue with email"} <ArrowRight size={17} />
+            {submitting ? "Signing in…" : "Sign in"} <ArrowRight size={17} />
           </button>
         </form>
       </div>
@@ -159,12 +176,19 @@ export function SignInPage() {
 
 export function SignUpPage() {
   const [, setLocation] = useLocation();
+  const { isSignedIn } = useAuth();
   const { isLoaded, signUp } = useSignUp();
   const [name, setName] = useState("");
   const [email, setEmail] = useState("");
   const [password, setPassword] = useState("");
   const [error, setError] = useState<string | null>(null);
   const [submitting, setSubmitting] = useState(false);
+
+  useEffect(() => {
+    if (isSignedIn) {
+      setLocation("/organization");
+    }
+  }, [isSignedIn, setLocation]);
 
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
@@ -182,7 +206,12 @@ export function SignUpPage() {
       await signUp.prepareEmailAddressVerification({ strategy: "email_code" });
       setLocation("/verify");
     } catch (err) {
-      setError(firstClerkErrorMessage(err));
+      const msg = firstClerkErrorMessage(err);
+      if (msg.toLowerCase().includes("session already exists")) {
+        setLocation("/organization");
+        return;
+      }
+      setError(msg);
     } finally {
       setSubmitting(false);
     }
@@ -198,7 +227,12 @@ export function SignUpPage() {
         redirectUrlComplete: "/organization",
       });
     } catch (err) {
-      setError(firstClerkErrorMessage(err));
+      const msg = firstClerkErrorMessage(err);
+      if (msg.toLowerCase().includes("session already exists")) {
+        setLocation("/organization");
+        return;
+      }
+      setError(msg);
     }
   }
 
