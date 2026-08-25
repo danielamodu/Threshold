@@ -39,6 +39,9 @@ function LoadingRow() {
 }
 
 function ErrorRow({ message }: { message: string }) {
+  if (message.includes("404") || message.toLowerCase().includes("not found")) {
+    return <div className="product-content"><p className="eyebrow">No active routes currently recorded in this workspace.</p></div>;
+  }
   return <div className="product-content"><p className="form-error">{message}</p></div>;
 }
 
