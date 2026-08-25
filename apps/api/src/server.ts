@@ -74,6 +74,11 @@ export async function buildServer(): Promise<FastifyInstance> {
     registerRouteRoutes(app, { connectionString });
     registerAuditRoutes(app, { connectionString });
     registerDriverRoutes(app, { connectionString });
+    app.log.info('org-scoped routes mounted: /api/routes, /api/audit, /api/drivers');
+  } else {
+    app.log.warn(
+      'org-scoped routes NOT mounted: NEON_DATABASE_URL/DATABASE_URL absent at startup — /api/routes, /api/audit, /api/drivers will 404',
+    );
   }
 
   // Serves whatever LocalFilePdfStore (see @threshold/output) has written to
