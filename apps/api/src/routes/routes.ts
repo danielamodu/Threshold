@@ -24,6 +24,7 @@ import type {
 import { RouteStore, canRead, canWrite } from '@threshold/accounts';
 import type { CargoClass } from '@threshold/types';
 import { requireAuth } from '../auth.js';
+import { makeEnsureOrg } from '../org-ensure.js';
 
 interface CreateRouteBody {
   route_id?: string;
@@ -67,13 +68,15 @@ export function registerRouteRoutes(
 ): void {
   const authenticate = options.authenticate ?? requireAuth;
   const store = new RouteStore(options.connectionString);
+  const ensureOrg = makeEnsureOrg(options.connectionString);
   app.addHook('onClose', async () => {
     await store.close();
+    await ensureOrg.close();
   });
 
   app.get(
     '/api/routes',
-    { preHandler: [authenticate, requireRouteAccess('read')] },
+    { preHandler: [authenticate, ensureOrg.preHandler, requireRouteAccess('read')] },
     async (request, reply) => {
       const orgId = requireOrg(request, reply);
       if (!orgId) return;
@@ -83,7 +86,7 @@ export function registerRouteRoutes(
 
   app.get<{ Params: { route_id: string } }>(
     '/api/routes/:route_id',
-    { preHandler: [authenticate, requireRouteAccess('read')] },
+    { preHandler: [authenticate, ensureOrg.preHandler, requireRouteAccess('read')] },
     async (request, reply) => {
       const orgId = requireOrg(request, reply);
       if (!orgId) return;
@@ -99,7 +102,7 @@ export function registerRouteRoutes(
 
   app.post<{ Body: CreateRouteBody }>(
     '/api/routes',
-    { preHandler: [authenticate, requireRouteAccess('write')] },
+    { preHandler: [authenticate, ensureOrg.preHandler, requireRouteAccess('write')] },
     async (request, reply) => {
       const orgId = requireOrg(request, reply);
       if (!orgId) return;

@@ -39,6 +39,7 @@ import type {
 } from 'fastify';
 import { DriverStore, canRead, canWrite } from '@threshold/accounts';
 import { requireAuth } from '../auth.js';
+import { makeEnsureOrg } from '../org-ensure.js';
 
 interface CreateDriverBody {
   driver_id?: string;
@@ -90,8 +91,10 @@ export function registerDriverRoutes(
 ): void {
   const authenticate = options.authenticate ?? requireAuth;
   const store = new DriverStore(options.connectionString);
+  const ensureOrg = makeEnsureOrg(options.connectionString);
   app.addHook('onClose', async () => {
     await store.close();
+    await ensureOrg.close();
   });
 
   /**
@@ -105,7 +108,7 @@ export function registerDriverRoutes(
    * Fastify's router matches the static `/me` segment ahead of a parameter
    * regardless of declaration order, so `me` can never be read as a driver_id.
    */
-  app.get('/api/drivers/me', { preHandler: [authenticate] }, async (request, reply) => {
+  app.get('/api/drivers/me', { preHandler: [authenticate, ensureOrg.preHandler] }, async (request, reply) => {
     const orgId = requireOrg(request, reply);
     if (!orgId) return;
     const userId = request.auth?.userId;
@@ -118,7 +121,7 @@ export function registerDriverRoutes(
 
   app.get(
     '/api/drivers',
-    { preHandler: [authenticate, requireOrgManagement('read')] },
+    { preHandler: [authenticate, ensureOrg.preHandler, requireOrgManagement('read')] },
     async (request, reply) => {
       const orgId = requireOrg(request, reply);
       if (!orgId) return;
@@ -134,7 +137,7 @@ export function registerDriverRoutes(
    */
   app.post<{ Body: CreateDriverBody }>(
     '/api/drivers',
-    { preHandler: [authenticate, requireOrgManagement('write')] },
+    { preHandler: [authenticate, ensureOrg.preHandler, requireOrgManagement('write')] },
     async (request, reply) => {
       const orgId = requireOrg(request, reply);
       if (!orgId) return;
@@ -169,7 +172,7 @@ export function registerDriverRoutes(
 
   app.post<{ Params: { driver_id: string }; Body: LinkDriverBody }>(
     '/api/drivers/:driver_id/link',
-    { preHandler: [authenticate, requireOrgManagement('write')] },
+    { preHandler: [authenticate, ensureOrg.preHandler, requireOrgManagement('write')] },
     async (request, reply) => {
       const orgId = requireOrg(request, reply);
       if (!orgId) return;

@@ -28,6 +28,7 @@ import type { FastifyInstance, preHandlerHookHandler } from 'fastify';
 import { PostgresAuditSink } from '@threshold/audit';
 import { DriverStore, canRead } from '@threshold/accounts';
 import { requireAuth } from '../auth.js';
+import { makeEnsureOrg } from '../org-ensure.js';
 
 export function registerAuditRoutes(
   app: FastifyInstance,
@@ -36,12 +37,17 @@ export function registerAuditRoutes(
   const authenticate = options.authenticate ?? requireAuth;
   const sink = new PostgresAuditSink({ connectionString: options.connectionString });
   const drivers = new DriverStore(options.connectionString);
+  const ensureOrg = makeEnsureOrg(options.connectionString);
   app.addHook('onClose', async () => {
     await sink.close();
     await drivers.close();
+    await ensureOrg.close();
   });
 
-  app.get('/api/audit', { preHandler: [authenticate] }, async (request, reply) => {
+  app.get(
+    '/api/audit',
+    { preHandler: [authenticate, ensureOrg.preHandler] },
+    async (request, reply) => {
     const role = request.auth?.role;
     const orgId = request.auth?.orgId;
     const userId = request.auth?.userId;
