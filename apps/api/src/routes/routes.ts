@@ -62,6 +62,21 @@ function requireOrg(request: FastifyRequest, reply: FastifyReply): string | unde
   return orgId;
 }
 
+const UNIQUE_VIOLATION = '23505';
+const FK_VIOLATION = '23503';
+
+function pgErrorCode(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('code' in error)) return undefined;
+  const { code } = error as { code: unknown };
+  return typeof code === 'string' ? code : undefined;
+}
+
+function pgConstraint(error: unknown): string | undefined {
+  if (typeof error !== 'object' || error === null || !('constraint' in error)) return undefined;
+  const { constraint } = error as { constraint: unknown };
+  return typeof constraint === 'string' ? constraint : undefined;
+}
+
 export function registerRouteRoutes(
   app: FastifyInstance,
   options: { connectionString: string; authenticate?: preHandlerHookHandler },
@@ -111,8 +126,29 @@ export function registerRouteRoutes(
         reply.code(400).send({ error: 'route_id, driver_id, and cargo_class are required.' });
         return;
       }
-      const route = await store.create({ org_id: orgId, route_id, driver_id, cargo_class });
-      reply.code(201).send(route);
+      try {
+        const route = await store.create({ org_id: orgId, route_id, driver_id, cargo_class });
+        reply.code(201).send(route);
+      } catch (error) {
+        const code = pgErrorCode(error);
+        if (code === UNIQUE_VIOLATION) {
+          reply.code(409).send({ error: `Route '${route_id}' already exists in this organization.` });
+          return;
+        }
+        if (code === FK_VIOLATION) {
+          const constraint = pgConstraint(error);
+          if (constraint === 'routes_driver_fk') {
+            reply
+              .code(400)
+              .send({ error: `Driver '${driver_id}' not found in this organization. Create the driver first.` });
+            return;
+          }
+          // org_id FK (shouldn't happen — ensureOrg provisions it) or any other FK
+          reply.code(400).send({ error: 'Foreign key violation — check driver_id and organization.' });
+          return;
+        }
+        throw error;
+      }
     },
   );
 }
