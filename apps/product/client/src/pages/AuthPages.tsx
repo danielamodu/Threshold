@@ -373,7 +373,7 @@ export function OrganizationEntryPage() {
     }
     if (listLoaded && userMemberships.count === 1 && setActive) {
       const only = userMemberships.data[0];
-      if (only) void setActive({ organization: only.organization.id });
+      if (only) void setActive({ organization: only.organization.id })?.then(() => setLocation(`/app/dispatcher/routes`));
     }
   }, [authLoaded, orgId, listLoaded, userMemberships, setActive, setLocation]);
 
@@ -393,7 +393,11 @@ export function OrganizationEntryPage() {
           {!listLoaded && <p><KeyRound size={14} /> Loading your memberships…</p>}
           {listLoaded && userMemberships.count === 0 && <p>You don't belong to an organisation yet. Ask an admin to invite you, or check the email you signed up with for a pending invitation.</p>}
           {listLoaded && userMemberships.data.map((membership) => (
-            <button key={membership.id} className="org-role-card" onClick={() => void setActive?.({ organization: membership.organization.id })}>
+            <button
+              key={membership.id}
+              className="org-role-card"
+              onClick={() => void setActive?.({ organization: membership.organization.id })?.then(() => setLocation(`/app/dispatcher/routes`))}
+            >
               <strong>{membership.organization.name}</strong>
               <small>{membership.role}</small>
             </button>
