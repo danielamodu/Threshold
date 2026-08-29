@@ -36,6 +36,11 @@ jobs:
           script: |
             set -euo pipefail
             cd /opt/threshold
+            # EC2's working tree can get dirty from ad-hoc deploys (e.g. a
+            # locally-modified package-lock.json from `npm install` run on the
+            # box) — restore tracked files so `git pull --ff-only` never blocks
+            # on "would be overwritten" and fail the workflow.
+            git restore package-lock.json 2>/dev/null || true
             git pull --ff-only
             npm install --no-audit --no-fund
             npm run build:packages
