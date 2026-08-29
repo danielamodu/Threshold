@@ -121,7 +121,47 @@ export function registerDriverRoutes(
       reply.code(403).send({ error: 'No user identity on this session.' });
       return;
     }
-    return { driver: (await store.getByClerkUser(orgId, userId)) ?? null };
+    const existing = await store.getByClerkUser(orgId, userId);
+    if (existing) return { driver: existing };
+
+    // Fallback auto-link: if webhook hasn't fired (or isn't configured), check
+    // the Clerk membership for this user/org. If the membership's publicMetadata
+    // contains a driver_id that matches an unlinked driver row, link it now.
+    // This makes the invite flow work even when the webhook endpoint isn't yet
+    // configured in the Clerk dashboard, or when Svix delivery is delayed.
+    const secretKey = process.env.CLERK_SECRET_KEY?.trim();
+    if (secretKey && request.auth?.role === 'driver') {
+      try {
+        const clerkClient = createClerkClient({ secretKey });
+        // Fetch the membership for this user in this org
+        const memberships = await clerkClient.organizations.getOrganizationMembershipList({
+          organizationId: orgId,
+          userId: [userId],
+        });
+        const membership = memberships.data?.[0];
+        const driverId =
+          (membership?.publicMetadata as Record<string, unknown> | undefined)?.driver_id ??
+          (membership?.privateMetadata as Record<string, unknown> | undefined)?.driver_id;
+        if (typeof driverId === 'string' && driverId) {
+          const candidate = await store.get(orgId, driverId);
+          if (candidate && !candidate.clerk_user_id) {
+            try {
+              const linked = await store.linkClerkUser({
+                org_id: orgId,
+                driver_id: driverId,
+                clerk_user_id: userId,
+              });
+              if (linked) return { driver: linked };
+            } catch {
+              // If link fails (e.g., race, already linked elsewhere), fall through to null
+            }
+          }
+        }
+      } catch {
+        // Clerk lookup failure is non-fatal for this endpoint — return unlinked
+      }
+    }
+    return { driver: null };
   });
 
   app.get(
