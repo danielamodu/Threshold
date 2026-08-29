@@ -8,6 +8,7 @@ import { registerAuditRoutes } from './routes/audit.js';
 import { registerDemoRoutes } from './routes/demo.js';
 import { registerDriverRoutes } from './routes/drivers.js';
 import { registerRouteRoutes } from './routes/routes.js';
+import { registerWebhookRoutes } from './routes/webhooks.js';
 
 /**
  * Phase 0 scope: a deployable skeleton with liveness/readiness only.
@@ -66,10 +67,17 @@ export async function buildServer(): Promise<FastifyInstance> {
    */
   app.get('/api/me', { preHandler: requireAuth }, async (request) => request.auth);
 
+  // Webhook for Clerk auto-linking — public, no auth, but needs DB to write the link.
+  // Must be registered outside the DB-gated block's auth scope, and before the
+  // 404 fallback, so Clerk can reach it via the Vercel proxy without a session.
+  const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL;
+  if (connectionString) {
+    registerWebhookRoutes(app, { connectionString });
+  }
+
   // Real, org-scoped, role-gated route CRUD — only mounted when a database is
   // actually configured, so buildServer() (used directly by tests with no DB
   // env set) doesn't fail just for existing.
-  const connectionString = process.env.NEON_DATABASE_URL || process.env.DATABASE_URL;
   if (connectionString) {
     registerRouteRoutes(app, { connectionString });
     registerAuditRoutes(app, { connectionString });

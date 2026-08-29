@@ -9,11 +9,11 @@
  */
 import { useState } from "react";
 import { useAuth, OrganizationProfile } from "@clerk/clerk-react";
-import { ArrowRight, ArrowUpRight, ClipboardCheck, FileClock, FilePlus2, FileWarning, Link2, Link2Off, PanelRightOpen, Plus, ShieldCheck, SlidersHorizontal, UserCheck } from "lucide-react";
+import { ArrowRight, ArrowUpRight, ClipboardCheck, FileClock, FilePlus2, FileWarning, Link2, Link2Off, Mail, PanelRightOpen, Plus, ShieldCheck, SlidersHorizontal, UserCheck } from "lucide-react";
 import { useParams } from "wouter";
 import { ProductShell, useProductRoute } from "@/components/ProductShell";
 import { useApiCall } from "@/hooks/useApiCall";
-import { createDriver, createRoute, getRoute, linkDriver, listAudit, listDrivers, listRoutes, resolvePdfUrl, type ApiDriver, type ApiRoute } from "@/lib/api";
+import { createDriver, createRoute, getRoute, inviteDriver, linkDriver, listAudit, listDrivers, listRoutes, resolvePdfUrl, type ApiDriver, type ApiRoute } from "@/lib/api";
 import { claimEpisodes, groupAuditByEvent, type GroupedDecision } from "@/lib/auditGrouping";
 import type { RouteStatus } from "@/lib/productShellData";
 import type { CargoClass } from "@threshold/types";
@@ -222,10 +222,6 @@ function SettingsPage() {
   return <ProductShell title="Organisation" subtitle=""><section className="product-content"><OrganizationProfile routing="hash" /></section></ProductShell>;
 }
 
-function MembersPage() {
-  return <ProductShell title="Members" subtitle=""><section className="product-content"><OrganizationProfile routing="hash" /></section></ProductShell>;
-}
-
 /**
  * Driver identity administration — the screen that makes the Driver role work.
  * Clerk's OrganizationProfile (Members) invites the human and gives them the
@@ -243,6 +239,9 @@ function DriversPage() {
   const [clerkUserId, setClerkUserId] = useState("");
   const [saving, setSaving] = useState(false);
   const [saveError, setSaveError] = useState<string | null>(null);
+  const [inviteEmail, setInviteEmail] = useState("");
+  const [inviteStatus, setInviteStatus] = useState<"idle" | "saving" | "done" | "error">("idle");
+  const [inviteError, setInviteError] = useState<string | null>(null);
 
   const [newDriverId, setNewDriverId] = useState("");
   const [newName, setNewName] = useState("");
@@ -255,6 +254,9 @@ function DriversPage() {
     setSelected(driver);
     setClerkUserId(driver.clerk_user_id ?? "");
     setSaveError(null);
+    setInviteEmail("");
+    setInviteStatus("idle");
+    setInviteError(null);
   }
 
   async function submitCreate(event: React.FormEvent<HTMLFormElement>) {
@@ -289,16 +291,39 @@ function DriversPage() {
     }
   }
 
+  async function sendInvite() {
+    if (!selected) return;
+    setInviteStatus("saving");
+    setInviteError(null);
+    try {
+      await inviteDriver(await getToken(), selected.driver_id, inviteEmail.trim());
+      setInviteStatus("done");
+      setInviteEmail("");
+    } catch (err) {
+      setInviteStatus("error");
+      setInviteError(err instanceof Error ? err.message : String(err));
+    }
+  }
+
   return <ProductShell title="Drivers" subtitle="">
     <section className="product-content">
       {loading && <LoadingRow />}
       {error && <ErrorRow message={error} />}
       {!loading && !error && drivers.length === 0 && <p className="eyebrow">No drivers yet in this organisation.</p>}
-      {drivers.length > 0 && <div className="artifact-register"><div className="artifact-register__head"><span>Driver</span><span>Name</span><span>Linked Clerk user</span><span>State</span><span /></div>{drivers.map((d) => <article className="artifact-row" key={d.id}><span><UserCheck size={16} /><strong>{d.driver_id}</strong></span><span>{d.name ?? "—"}</span><span>{d.clerk_user_id ?? "—"}</span><span className={d.clerk_user_id ? "artifact-state" : "artifact-state artifact-state--watch"}>{d.clerk_user_id ? "Linked" : "Not linked"}</span><button onClick={() => open(d)}><Link2 size={15} /> {d.clerk_user_id ? "Change" : "Link"}</button></article>)}</div>}
+      {drivers.length > 0 && <div className="artifact-register"><div className="artifact-register__head"><span>Driver</span><span>Name</span><span>Linked Clerk user</span><span>State</span><span /></div>{drivers.map((d) => <article className="artifact-row" key={d.id}><span><UserCheck size={16} /><strong>{d.driver_id}</strong></span><span>{d.name ?? "—"}</span><span>{d.clerk_user_id ?? "—"}</span><span className={d.clerk_user_id ? "artifact-state" : "artifact-state artifact-state--watch"}>{d.clerk_user_id ? "Linked" : "Not linked"}</span>{d.clerk_user_id ? <button onClick={() => open(d)}><Link2 size={15} /> Change</button> : <button onClick={() => open(d)}><Mail size={15} /> Invite</button>}</article>)}</div>}
 
       {selected && <aside className="artifact-drawer"><div className="artifact-drawer__head"><div><h2>{selected.driver_id}</h2></div><button onClick={() => setSelected(null)}>Close</button></div><div className="artifact-drawer__body">
         <div><span>Name</span><strong>{selected.name ?? "—"}</strong></div>
         <div><span>Currently linked</span><strong>{selected.clerk_user_id ?? "nobody"}</strong></div>
+        {!selected.clerk_user_id && <div style={{ border: '1px solid var(--line)', padding: '12px', margin: '12px 0' }}>
+          <h3 style={{ fontSize: 12, fontWeight: 600, margin: '0 0 6px' }}>Invite driver</h3>
+          <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '0 0 10px', lineHeight: 1.4 }}>Enter the driver's email — they'll receive an invitation as a driver and be auto-linked to <strong>{selected.driver_id}</strong> when they accept. No ID to copy.</p>
+          <label><span>Email</span><input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="driver@company.com" type="email" /></label>
+          <button className="product-button" style={{ marginTop: 8 }} disabled={inviteStatus === "saving" || inviteEmail.trim().length === 0} onClick={() => void sendInvite()}><Mail size={15} /> {inviteStatus === "saving" ? "Inviting…" : "Send invite"}</button>
+          {inviteStatus === "done" && <p className="form-confirmation"><ShieldCheck size={15} /> Invitation sent to {inviteEmail || "driver"} — they'll be linked automatically when they accept.</p>}
+          {inviteError && <p className="form-error">{inviteError}</p>}
+          <div style={{ margin: '12px 0', textAlign: 'center', fontSize: 10, color: 'var(--muted-foreground)', letterSpacing: '.08em', textTransform: 'uppercase' }}>Or link manually</div>
+        </div>}
         <label><span>Clerk user ID</span><input value={clerkUserId} onChange={(e) => setClerkUserId(e.target.value)} placeholder="user_2abc…" /></label>
         <button className="product-button" disabled={saving || clerkUserId.trim().length === 0} onClick={() => void save(clerkUserId.trim())}><Link2 size={15} /> {saving ? "Saving…" : "Link this user"}</button>
         {selected.clerk_user_id && <button className="product-button product-button--quiet" disabled={saving} onClick={() => void save(null)}><Link2Off size={15} /> Unlink</button>}
@@ -380,7 +405,6 @@ export function ProductApp() {
   if ((role === "dispatcher" || role === "admin") && page === "create") return <CreateRoutePage role={role} />;
   if ((role === "dispatcher" || role === "admin") && page === "activity") return <ActivityPage />;
   if (role === "admin" && page === "settings") return <SettingsPage />;
-  if (role === "admin" && page === "members") return <MembersPage />;
   if (role === "admin" && page === "drivers") return <DriversPage />;
   if (role === "driver" && page === "routes") return <DriverRoutesPage />;
   if (role === "driver" && page === "records") return <RecordsPage driverOnly />;

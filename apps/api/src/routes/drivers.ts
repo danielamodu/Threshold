@@ -37,6 +37,7 @@ import type {
   FastifyRequest,
   preHandlerHookHandler,
 } from 'fastify';
+import { createClerkClient } from '@clerk/backend';
 import { DriverStore, canRead, canWrite } from '@threshold/accounts';
 import { requireAuth } from '../auth.js';
 import { makeEnsureOrg } from '../org-ensure.js';
@@ -50,6 +51,10 @@ interface CreateDriverBody {
 interface LinkDriverBody {
   /** null explicitly unlinks — the undo for a mis-assignment. */
   clerk_user_id?: string | null;
+}
+
+interface InviteDriverBody {
+  email?: string;
 }
 
 /** Postgres SQLSTATEs this file translates into HTTP rather than a 500. */
@@ -212,6 +217,83 @@ export function registerDriverRoutes(
           return;
         }
         throw error;
+      }
+    },
+  );
+
+  /**
+   * Invite-based linking — the primary, low-friction path. Admin enters an
+   * email, we create a Clerk organization invitation with role `org:driver`
+   * and publicMetadata `{ driver_id }`. When the invitee accepts, the
+   * `/api/webhooks/clerk` handler (organizationMembership.created) reads that
+   * metadata and auto-links. This avoids the manual "paste Clerk User ID" step.
+   *
+   * Keeps the manual paste as fallback — this is the easier path, not the only one.
+   * If a driver is already linked, we 409 — show who's linked instead.
+   */
+  app.post<{ Params: { driver_id: string }; Body: InviteDriverBody }>(
+    '/api/drivers/:driver_id/invite',
+    { preHandler: [authenticate, ensureOrg.preHandler, requireOrgManagement('write')] },
+    async (request, reply) => {
+      const orgId = requireOrg(request, reply);
+      if (!orgId) return;
+
+      const email = request.body?.email?.trim();
+      if (!email) {
+        reply.code(400).send({ error: 'email is required.' });
+        return;
+      }
+      // Basic email format check — Clerk will validate thoroughly, but failing fast
+      // gives a clearer 400 without an extra round-trip.
+      if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) {
+        reply.code(400).send({ error: 'Invalid email address.' });
+        return;
+      }
+
+      const driver = await store.get(orgId, request.params.driver_id);
+      if (!driver) {
+        reply.code(404).send({ error: 'Driver not found in your organization.' });
+        return;
+      }
+      if (driver.clerk_user_id) {
+        reply.code(409).send({
+          error: `Driver '${driver.driver_id}' is already linked to ${driver.clerk_user_id}. Unlink first or use a different driver.`,
+        });
+        return;
+      }
+
+      const secretKey = process.env.CLERK_SECRET_KEY?.trim();
+      if (!secretKey) {
+        reply.code(500).send({ error: 'CLERK_SECRET_KEY is not configured on this server.' });
+        return;
+      }
+
+      try {
+        const clerkClient = createClerkClient({ secretKey });
+        const invitation = await clerkClient.organizations.createOrganizationInvitation({
+          organizationId: orgId,
+          emailAddress: email,
+          role: 'org:driver' as const,
+          publicMetadata: { driver_id: driver.driver_id },
+          // Also set privateMetadata as fallback — webhook checks both
+          privateMetadata: { driver_id: driver.driver_id },
+          inviterUserId: request.auth?.userId,
+        });
+        reply.code(201).send({
+          invitation_id: invitation.id,
+          email_address: invitation.emailAddress,
+          status: invitation.status,
+          driver_id: driver.driver_id,
+        });
+      } catch (error) {
+        const message = error instanceof Error ? error.message : String(error);
+        // Clerk returns 422 for already invited / already a member — map to 409
+        if (message.toLowerCase().includes('already') || message.toLowerCase().includes('exists')) {
+          reply.code(409).send({ error: message });
+          return;
+        }
+        request.log.error({ err: error, orgId, driverId: driver.driver_id, email }, 'Failed to create Clerk invitation');
+        reply.code(502).send({ error: `Failed to create invitation: ${message}` });
       }
     },
   );

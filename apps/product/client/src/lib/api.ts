@@ -1,8 +1,3 @@
-/**
- * Real API client for the Fastify backend (§11 product-shell wiring).
- * Every call is bearer-authenticated with the real Clerk session token —
- * there is no local fixture path left in here.
- */
 import type { CargoClass } from "@threshold/types";
 
 const API_BASE = import.meta.env.VITE_API_BASE_URL ?? "";
@@ -73,12 +68,6 @@ export interface ApiDriver {
   created_at: string;
 }
 
-/**
- * `driver_unlinked` is only ever set for a driver-role session whose Clerk
- * user has no `drivers.clerk_user_id` row yet — an empty feed for a
- * configuration reason, not because there is nothing to show. See
- * apps/api/src/routes/audit.ts.
- */
 export interface AuditResponse {
   entries: ApiAuditEntry[];
   driver_unlinked?: boolean;
@@ -127,6 +116,14 @@ export function linkDriver(token: string | null, driverId: string, clerkUserId: 
     method: "POST",
     body: JSON.stringify({ clerk_user_id: clerkUserId }),
   });
+}
+
+export function inviteDriver(token: string | null, driverId: string, email: string) {
+  return request<{ invitation_id: string; email_address: string; status: string; driver_id: string }>(
+    `/api/drivers/${encodeURIComponent(driverId)}/invite`,
+    token,
+    { method: "POST", body: JSON.stringify({ email }) },
+  );
 }
 
 /** LocalFilePdfStore returns a relative /pdfs/... URL — apps/api serves it, not this app. */
