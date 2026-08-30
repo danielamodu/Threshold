@@ -8,7 +8,7 @@
  * that can put a session into a role it doesn't actually hold.
  */
 import { useOrganization } from "@clerk/clerk-react";
-import { AlertTriangle, BookOpenText, FileClock, FilePlus2, Gauge, LogOut, MapPinned, Route as RouteIcon, Settings2, ShieldCheck, UserCheck, UsersRound } from "lucide-react";
+import { AlertTriangle, BookOpenText, FileClock, FilePlus2, Gauge, LogOut, MapPinned, Route as RouteIcon, Settings2, ShieldCheck, UserCheck } from "lucide-react";
 import { useLocation, useParams } from "wouter";
 import { BrandMark } from "@/components/BrandMark";
 import { useThresholdSession } from "@/hooks/useThresholdSession";
@@ -19,7 +19,7 @@ import "@/product-review.css";
 type NavItem = { label: string; page: string; icon: typeof Gauge };
 
 const navigation: Record<DemoRole, NavItem[]> = {
-  admin: [{ label: "Routes", page: "routes", icon: RouteIcon }, { label: "Create route", page: "create", icon: FilePlus2 }, { label: "Drivers", page: "drivers", icon: UserCheck }, { label: "Organisation", page: "settings", icon: Settings2 }, { label: "Members", page: "members", icon: UsersRound }],
+  admin: [{ label: "Routes", page: "routes", icon: RouteIcon }, { label: "Create route", page: "create", icon: FilePlus2 }, { label: "Drivers", page: "drivers", icon: UserCheck }, { label: "Organisation", page: "settings", icon: Settings2 }],
   dispatcher: [{ label: "Routes", page: "routes", icon: RouteIcon }, { label: "Create route", page: "create", icon: FilePlus2 }, { label: "Route activity", page: "activity", icon: Gauge }],
   compliance: [{ label: "Audit timeline", page: "audit", icon: FileClock }, { label: "Compliance records", page: "records", icon: ShieldCheck }, { label: "Cargo claims", page: "claims", icon: AlertTriangle }],
   driver: [{ label: "My routes", page: "routes", icon: MapPinned }, { label: "My records", page: "records", icon: BookOpenText }],

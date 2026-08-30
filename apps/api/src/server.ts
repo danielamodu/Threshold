@@ -7,6 +7,7 @@ import { requireAuth } from './auth.js';
 import { registerAuditRoutes } from './routes/audit.js';
 import { registerDemoRoutes } from './routes/demo.js';
 import { registerDriverRoutes } from './routes/drivers.js';
+import { registerForecastRoutes } from './routes/forecast.js';
 import { registerRouteRoutes } from './routes/routes.js';
 import { registerWebhookRoutes } from './routes/webhooks.js';
 
@@ -82,10 +83,11 @@ export async function buildServer(): Promise<FastifyInstance> {
     registerRouteRoutes(app, { connectionString });
     registerAuditRoutes(app, { connectionString });
     registerDriverRoutes(app, { connectionString });
-    app.log.info('org-scoped routes mounted: /api/routes, /api/audit, /api/drivers');
+    registerForecastRoutes(app, { connectionString });
+    app.log.info('org-scoped routes mounted: /api/routes, /api/audit, /api/drivers, /api/routes/:id/forecast');
   } else {
     app.log.warn(
-      'org-scoped routes NOT mounted: NEON_DATABASE_URL/DATABASE_URL absent at startup — /api/routes, /api/audit, /api/drivers will 404',
+      'org-scoped routes NOT mounted: NEON_DATABASE_URL/DATABASE_URL absent at startup — /api/routes, /api/audit, /api/drivers, /api/routes/:id/forecast will 404',
     );
   }
 
