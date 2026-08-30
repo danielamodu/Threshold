@@ -15,6 +15,7 @@ import { ProductShell, useProductRoute } from "@/components/ProductShell";
 import { useApiCall } from "@/hooks/useApiCall";
 import { createDriver, createRoute, getRoute, inviteDriver, linkDriver, listAudit, listDrivers, listRoutes, resolvePdfUrl, type ApiDriver, type ApiRoute, updateDriver } from "@/lib/api";
 import { claimEpisodes, groupAuditByEvent, type GroupedDecision } from "@/lib/auditGrouping";
+import { LiveFleetMap } from "@/components/LiveFleetMap";
 import type { RouteStatus } from "@/lib/productShellData";
 import type { CargoClass } from "@threshold/types";
 
@@ -82,6 +83,7 @@ function DriverNotLinkedNotice() {
   </div>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function RoutesPage({ role }: { role: "admin" | "dispatcher" }) {
   const { data, loading, error } = useApiCall((token) => listRoutes(token), []);
   const { latestByRoute } = useRouteStatuses();
@@ -106,6 +108,7 @@ function RoutesPage({ role }: { role: "admin" | "dispatcher" }) {
  * their driver_id, there is nothing to filter client-side: whatever arrives
  * here is by definition theirs.
  */
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function DriverRoutesPage() {
   const { data, loading, error } = useApiCall((token) => listAudit(token), []);
   const groups = data ? groupAuditByEvent(data.entries) : [];
@@ -381,6 +384,7 @@ function DriversPage() {
   </ProductShell>;
 }
 
+// eslint-disable-next-line @typescript-eslint/no-unused-vars
 function AuditPage() {
   const { data, loading, error } = useApiCall((token) => listAudit(token), []);
   const timeline = data ? groupAuditByEvent(data.entries) : [];
@@ -392,6 +396,47 @@ function AuditPage() {
       <div className="audit-stack">{timeline.map((item) => <article className={`audit-card audit-card--${item.decision ? "aligned" : "split"}`} key={item.event_id}><div className="audit-card__stamp"><span className="eyebrow">{item.occurred_at ? new Date(item.occurred_at).toLocaleString() : "—"}</span><strong>{item.route_id ?? "—"}</strong><small>seq {item.seq}</small></div><div className="audit-card__responses"><div><span>Driver</span><strong>{item.compliance?.action ?? "—"}</strong></div><div><span>Cargo</span><strong>{item.cargo?.recommended_action ?? "—"}</strong></div></div>{item.decision && <div className="audit-card__decision"><span className={`decision-tier decision-tier--${item.decision.action_tier}`}>{item.decision.action_tier}</span><span className="agreement">{(item.decision.confidence * 100).toFixed(0)}%</span></div>}{item.decision?.rationale && <p className="audit-card__rationale"><span>Reason</span>{item.decision.rationale}</p>}</article>)}</div>
     </section>
   </ProductShell>;
+}
+
+function DispatcherFleetPage() {
+  return (
+    <ProductShell title="Fleet — Live" subtitle="All routes, real FortyGuard timestamps — play, scrub, forecast">
+      <section className="product-content !pb-0">
+        <LiveFleetMap role="dispatcher" />
+      </section>
+    </ProductShell>
+  );
+}
+
+function AdminFleetPage() {
+  const [filter, setFilter] = useState<string | null>(null);
+  return (
+    <ProductShell title="Fleet — Live" subtitle="All routes, filter by live risk — tap a stat to focus">
+      <section className="product-content !pb-0">
+        <LiveFleetMap role="admin" filter={filter} onFilterChange={setFilter} />
+      </section>
+    </ProductShell>
+  );
+}
+
+function ComplianceFleetPage() {
+  return (
+    <ProductShell title="Compliance — Live trail" subtitle="Colored by threshold, hover for reading, click for the PDF">
+      <section className="product-content !pb-0">
+        <LiveFleetMap role="compliance" />
+      </section>
+    </ProductShell>
+  );
+}
+
+function DriverFleetPage() {
+  return (
+    <ProductShell title="My route — Live" subtitle="Your thermal band, your waypoints — tap to inspect">
+      <section className="product-content !pb-0">
+        <LiveFleetMap role="driver" />
+      </section>
+    </ProductShell>
+  );
 }
 
 function RecordsPage({ driverOnly = false }: { driverOnly?: boolean }) {
@@ -436,16 +481,25 @@ export function ProductApp() {
   const params = useParams<{ id?: string }>();
   const routeId = params.id;
 
-  if ((role === "dispatcher" || role === "admin") && page === "routes") return <RoutesPage role={role} />;
+  if (role === "dispatcher" && page === "routes") return <DispatcherFleetPage />;
+  if (role === "admin" && page === "routes") return <AdminFleetPage />;
+  if (role === "compliance" && page === "routes") return <ComplianceFleetPage />;
+  if (role === "compliance" && page === "audit") return <ComplianceFleetPage />;
+  if (role === "driver" && page === "routes") return <DriverFleetPage />;
   if ((role === "dispatcher" || role === "admin" || role === "driver") && page === "detail" && routeId) return <RouteDetailPage role={role} routeId={routeId} />;
   if ((role === "dispatcher" || role === "admin") && page === "create") return <CreateRoutePage role={role} />;
   if ((role === "dispatcher" || role === "admin") && page === "activity") return <ActivityPage />;
   if (role === "admin" && page === "settings") return <SettingsPage />;
   if (role === "admin" && page === "drivers") return <DriversPage />;
-  if (role === "driver" && page === "routes") return <DriverRoutesPage />;
   if (role === "driver" && page === "records") return <RecordsPage driverOnly />;
-  if (role === "compliance" && page === "audit") return <AuditPage />;
   if (role === "compliance" && page === "records") return <RecordsPage />;
   if (role === "compliance" && page === "claims") return <ClaimsPage />;
-  return <RoutesPage role="dispatcher" />;
+  // Fallback: live fleet for any role's main page
+  if (page === "routes") {
+    if (role === "admin") return <AdminFleetPage />;
+    if (role === "dispatcher") return <DispatcherFleetPage />;
+    if (role === "compliance") return <ComplianceFleetPage />;
+    if (role === "driver") return <DriverFleetPage />;
+  }
+  return <DispatcherFleetPage />;
 }

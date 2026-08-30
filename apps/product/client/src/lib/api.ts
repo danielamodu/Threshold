@@ -133,6 +133,45 @@ export function updateDriver(token: string | null, driverId: string, body: { nam
   });
 }
 
+export interface ForecastWaypoint {
+  waypoint_id: string;
+  lat: number;
+  lng: number;
+  projected_time: string;
+  projected_temp_c: number;
+  temp_stats: { mean: number; max: number; min: number; stddev: number };
+  humidity_pct: number | null;
+  data_quality: string;
+  cargo: { risk_level: string; recommended_action: string; cumulative_exposure_score: number; threshold: number };
+  cargo_severity: string;
+  compliance: { action: string; heat_index_c: number | null };
+  human_severity: string;
+}
+
+export interface ForecastResult {
+  route_id: string;
+  cargo_class: string;
+  driver_id: string;
+  departure_time: string;
+  forecast_source: string;
+  waypoints: ForecastWaypoint[];
+  route_risk_summary: {
+    safe_to_depart: boolean;
+    highest_risk_level: string;
+    first_breach_waypoint: string | null;
+    first_breach_time: string | null;
+    total_waypoints: number;
+    breached_waypoints: number;
+  };
+}
+
+export function getForecast(token: string | null, routeId: string, body: { departure_time: string }) {
+  return request<ForecastResult>(`/api/routes/${encodeURIComponent(routeId)}/forecast`, token, {
+    method: "POST",
+    body: JSON.stringify(body),
+  });
+}
+
 /** LocalFilePdfStore returns a relative /pdfs/... URL — apps/api serves it, not this app. */
 export function resolvePdfUrl(exportedPdfUrl: string | null | undefined): string | null {
   if (!exportedPdfUrl) return null;
