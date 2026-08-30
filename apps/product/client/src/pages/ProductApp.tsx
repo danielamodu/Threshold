@@ -8,10 +8,12 @@
  * the RouteStatus/DemoRoute *types* still used to describe real API rows.
  */
 import { useState } from "react";
-import { useAuth, OrganizationProfile } from "@clerk/clerk-react";
+import { useAuth, useUser, OrganizationProfile } from "@clerk/clerk-react";
 import { ArrowRight, ArrowUpRight, ClipboardCheck, FileClock, FilePlus2, FileWarning, Link2, Link2Off, Mail, PanelRightOpen, Plus, ShieldCheck, SlidersHorizontal, UserCheck } from "lucide-react";
 import { useParams } from "wouter";
 import { ProductShell, useProductRoute } from "@/components/ProductShell";
+import { OnboardingWizard } from "@/components/OnboardingWizard";
+import { isOnboardingDone, markOnboardingDone } from "@/lib/onboardingStore";
 import { useApiCall } from "@/hooks/useApiCall";
 import { createDriver, createRoute, getRoute, inviteDriver, linkDriver, listAudit, listDrivers, listRoutes, resolvePdfUrl, type ApiDriver, type ApiRoute, updateDriver } from "@/lib/api";
 import { claimEpisodes, groupAuditByEvent, type GroupedDecision } from "@/lib/auditGrouping";
@@ -480,26 +482,58 @@ export function ProductApp() {
   const { role, page } = useProductRoute();
   const params = useParams<{ id?: string }>();
   const routeId = params.id;
+  const { user } = useUser();
+  const userId = user?.id ?? null;
+  const [onboardingDismissed, setOnboardingDismissed] = useState(false);
+  const showOnboarding = Boolean(
+    userId && !onboardingDismissed && !isOnboardingDone(userId, role),
+  );
 
-  if (role === "dispatcher" && page === "routes") return <DispatcherFleetPage />;
-  if (role === "admin" && page === "routes") return <AdminFleetPage />;
-  if (role === "compliance" && page === "routes") return <ComplianceFleetPage />;
-  if (role === "compliance" && page === "audit") return <ComplianceFleetPage />;
-  if (role === "driver" && page === "routes") return <DriverFleetPage />;
-  if ((role === "dispatcher" || role === "admin" || role === "driver") && page === "detail" && routeId) return <RouteDetailPage role={role} routeId={routeId} />;
-  if ((role === "dispatcher" || role === "admin") && page === "create") return <CreateRoutePage role={role} />;
-  if ((role === "dispatcher" || role === "admin") && page === "activity") return <ActivityPage />;
-  if (role === "admin" && page === "settings") return <SettingsPage />;
-  if (role === "admin" && page === "drivers") return <DriversPage />;
-  if (role === "driver" && page === "records") return <RecordsPage driverOnly />;
-  if (role === "compliance" && page === "records") return <RecordsPage />;
-  if (role === "compliance" && page === "claims") return <ClaimsPage />;
+  const finishOnboarding = () => {
+    if (userId) markOnboardingDone(userId, role, "completed");
+    setOnboardingDismissed(true);
+  };
+  const dismissOnboarding = () => {
+    if (userId) markOnboardingDone(userId, role, "dismissed");
+    setOnboardingDismissed(true);
+  };
+
+  if (role === "dispatcher" && page === "routes") return wrapOnboarding(<DispatcherFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "admin" && page === "routes") return wrapOnboarding(<AdminFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "compliance" && page === "routes") return wrapOnboarding(<ComplianceFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "compliance" && page === "audit") return wrapOnboarding(<ComplianceFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "driver" && page === "routes") return wrapOnboarding(<DriverFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if ((role === "dispatcher" || role === "admin" || role === "driver") && page === "detail" && routeId) return wrapOnboarding(<RouteDetailPage role={role} routeId={routeId} />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if ((role === "dispatcher" || role === "admin") && page === "create") return wrapOnboarding(<CreateRoutePage role={role} />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if ((role === "dispatcher" || role === "admin") && page === "activity") return wrapOnboarding(<ActivityPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "admin" && page === "settings") return wrapOnboarding(<SettingsPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "admin" && page === "drivers") return wrapOnboarding(<DriversPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "driver" && page === "records") return wrapOnboarding(<RecordsPage driverOnly />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "compliance" && page === "records") return wrapOnboarding(<RecordsPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+  if (role === "compliance" && page === "claims") return wrapOnboarding(<ClaimsPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
   // Fallback: live fleet for any role's main page
   if (page === "routes") {
-    if (role === "admin") return <AdminFleetPage />;
-    if (role === "dispatcher") return <DispatcherFleetPage />;
-    if (role === "compliance") return <ComplianceFleetPage />;
-    if (role === "driver") return <DriverFleetPage />;
+    if (role === "admin") return wrapOnboarding(<AdminFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+    if (role === "dispatcher") return wrapOnboarding(<DispatcherFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+    if (role === "compliance") return wrapOnboarding(<ComplianceFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+    if (role === "driver") return wrapOnboarding(<DriverFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
   }
-  return <DispatcherFleetPage />;
+  return wrapOnboarding(<DispatcherFleetPage />, showOnboarding, userId, role, finishOnboarding, dismissOnboarding);
+}
+
+function wrapOnboarding(
+  page: React.ReactNode,
+  show: boolean,
+  userId: string | null,
+  role: "admin" | "dispatcher" | "compliance" | "driver",
+  onComplete: () => void,
+  onDismiss: () => void,
+): React.ReactNode {
+  if (!show || !userId) return page;
+  return (
+    <>
+      {page}
+      <OnboardingWizard role={role} userId={userId} onComplete={onComplete} onDismiss={onDismiss} />
+    </>
+  );
 }

@@ -283,24 +283,28 @@ export function LiveFleetMap({
               </g>
             )}
 
-            {/* Waypoint dots */}
+            {/* Waypoint dots — colored by per-waypoint risk from forecast/audit timeline */}
             {WAYPOINT_COORDS.map((wp, i) => {
               const p = points[i]!;
-              const g = selected?.waypointRisks.get(wp.waypoint_id);
-              const risk = g?.cargo?.risk_level ?? selected?.timeline[i]?.cargo?.risk_level ?? "nominal";
-              const isActiveDot = role === "compliance" ? true : playback.active?.event_id === g?.event_id;
+              // Resolve this dot's risk: timeline entry (audit) → forecast waypoint → fallback to nominal
+              const forecastWp = forecast?.waypoints?.find((fw) => fw.waypoint_id === wp.waypoint_id);
+              const risk =
+                (i < (selected?.timeline.length ?? 0) ? selected!.timeline[i]?.cargo?.risk_level : undefined) ??
+                forecastWp?.cargo?.risk_level ??
+                "nominal";
+              const isActiveDot = role === "compliance" ? true : i === playback.activeIdx;
               return (
                 <g
                   key={wp.waypoint_id}
                   onMouseEnter={() => setHoveredWp({ routeId: selected?.route.route_id ?? "", wpId: wp.waypoint_id })}
                   onMouseLeave={() => setHoveredWp(null)}
                   onClick={() => {
-                    if (role === "compliance" && g) {
-                      const url = apiResolvePdfUrl(g.compliance?.exported_pdf_url ?? g.claim?.exported_pdf_url ?? null);
+                    if (role === "compliance" && i < (selected?.timeline.length ?? 0)) {
+                      const entry = selected!.timeline[i];
+                      const url = apiResolvePdfUrl(entry?.compliance?.exported_pdf_url ?? entry?.claim?.exported_pdf_url ?? null);
                       if (url) window.open(url, "_blank");
-                    } else if (g) {
-                      const idx = selected?.timeline.findIndex((x) => x.event_id === g.event_id) ?? -1;
-                      if (idx >= 0) playback.setActiveIdx(idx);
+                    } else if (i < (selected?.timeline.length ?? 0)) {
+                      playback.setActiveIdx(i);
                     }
                   }}
                   style={{ cursor: role === "compliance" ? "pointer" : "default" }}
