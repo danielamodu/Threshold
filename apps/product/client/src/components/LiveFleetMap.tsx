@@ -223,7 +223,7 @@ export function LiveFleetMap({
   }
 
   return (
-    <div className="space-y-4">
+    <div className="space-y-4 overflow-hidden">
       {role === "admin" && (
         <div className="grid grid-cols-3 gap-2">
           {[
@@ -261,8 +261,8 @@ export function LiveFleetMap({
           </div>
         </div>
 
-        {/* SVG MAP */}
-        <div className="relative bg-[#1b1a18]" style={{ minHeight: role === "driver" ? 420 : 340 }}>
+        {/* SVG MAP — fits the viewport in one view, no scroll */}
+        <div className="relative overflow-hidden bg-[#1b1a18]" style={{ height: role === "driver" ? "54vh" : "48vh", minHeight: 300, maxHeight: 420 }}>
           <div className="pointer-events-none absolute inset-0 opacity-[0.45]" style={{ backgroundImage: "url(/assets/threshold-cartographic-field.webp)", backgroundSize: "cover", backgroundPosition: "center", mixBlendMode: "luminosity", filter: "contrast(1.05) brightness(.75) saturate(.4)" }} />
           <div className="pointer-events-none absolute inset-0" style={{ backgroundImage: "radial-gradient(ellipse at 60% 34%, rgba(255,75,43,.08), transparent 27%), linear-gradient(90deg, rgba(17,17,16,.82), rgba(17,17,16,.26) 48%, rgba(17,17,16,.52))" }} />
 
