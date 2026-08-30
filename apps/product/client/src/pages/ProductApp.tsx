@@ -315,14 +315,14 @@ function DriversPage() {
       {selected && <aside className="artifact-drawer"><div className="artifact-drawer__head"><div><h2>{selected.driver_id}</h2></div><button onClick={() => setSelected(null)}>Close</button></div><div className="artifact-drawer__body">
         <div><span>Name</span><strong>{selected.name ?? "—"}</strong></div>
         <div><span>Currently linked</span><strong>{selected.clerk_user_id ?? "nobody"}</strong></div>
-        {!selected.clerk_user_id && <div style={{ border: '1px solid var(--line)', padding: '12px', margin: '12px 0' }}>
-          <h3 style={{ fontSize: 12, fontWeight: 600, margin: '0 0 6px' }}>Invite driver</h3>
-          <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '0 0 10px', lineHeight: 1.4 }}>Enter the driver's email — they'll receive an invitation as a driver and be auto-linked to <strong>{selected.driver_id}</strong> when they accept. No ID to copy.</p>
-          <label><span>Email</span><input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="driver@company.com" type="email" autoComplete="email" /></label>
-          <button type="button" className="product-button" style={{ marginTop: 8 }} disabled={inviteStatus === "saving"} onClick={() => void sendInvite()}><Mail size={15} /> {inviteStatus === "saving" ? "Inviting…" : "Send invite"}</button>
-          {inviteStatus === "done" && <p className="form-confirmation"><ShieldCheck size={15} /> Invitation sent — they'll be linked automatically when they accept.</p>}
-          {inviteError && <p className="form-error">{inviteError}</p>}
-          <div style={{ margin: '12px 0', textAlign: 'center', fontSize: 10, color: 'var(--muted-foreground)', letterSpacing: '.08em', textTransform: 'uppercase' }}>Or link manually</div>
+        {!selected.clerk_user_id && <div style={{ border: '1px solid var(--line-strong)', padding: '14px', margin: '14px 0', background: 'rgba(255,255,255,0.02)' }}>
+          <h3 style={{ fontSize: 12, fontWeight: 600, margin: '0 0 6px', color: 'var(--paper)' }}>Invite driver</h3>
+          <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '0 0 12px', lineHeight: 1.4 }}>Enter the driver's email — they'll receive an invitation as a driver and be auto-linked to <strong style={{ color: 'var(--paper)' }}>{selected.driver_id}</strong> when they accept. No ID to copy.</p>
+          <label style={{ display: 'grid', gap: '6px', marginBottom: '10px' }}><span style={{ fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted-foreground)' }}>Email</span><input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="driver@company.com" type="email" autoComplete="email" style={{ width: '100%', height: '42px', padding: '0 12px', border: '1px solid var(--line-strong)', background: '#0f0f0e', color: 'var(--paper)', fontSize: '13px', outline: 'none' }} /></label>
+          <button type="button" className="product-button" style={{ width: '100%', marginTop: 4 }} disabled={inviteStatus === "saving"} onClick={() => void sendInvite()}><Mail size={15} /> {inviteStatus === "saving" ? "Inviting…" : "Send invite"}</button>
+          {inviteStatus === "done" && <p className="form-confirmation" style={{ marginTop: '10px' }}><ShieldCheck size={15} /> Invitation sent — they'll be linked automatically when they accept.</p>}
+          {inviteError && <p className="form-error" style={{ marginTop: '8px' }}>{inviteError}</p>}
+          <div style={{ margin: '14px 0 0', textAlign: 'center', fontSize: 10, color: 'var(--muted-foreground)', letterSpacing: '.08em', textTransform: 'uppercase' }}>Or link manually</div>
         </div>}
         <label><span>Clerk user ID</span><input value={clerkUserId} onChange={(e) => setClerkUserId(e.target.value)} placeholder="user_2abc…" /></label>
         <button className="product-button" disabled={saving || clerkUserId.trim().length === 0} onClick={() => void save(clerkUserId.trim())}><Link2 size={15} /> {saving ? "Saving…" : "Link this user"}</button>
