@@ -195,15 +195,7 @@ export function LiveFleetMap({
   const points = useMemo(() => project(WAYPOINT_COORDS), []);
   const pathD = points.map((p, i) => `${i === 0 ? "M" : "L"} ${p.x} ${p.y}`).join(" ");
 
-  if (routesCall.loading || auditCall.loading) {
-    return (
-      <div className="rounded-none border border-[var(--line-strong)] bg-[#171715] p-6">
-        <p className="eyebrow">Loading live route</p>
-      </div>
-    );
-  }
-
-  // Driver band
+  // Driver band — must be before early return to keep hook order stable
   const driverBand = (() => {
     if (!selected) return null;
     const active = playback.active ?? selected.latest;
@@ -214,13 +206,21 @@ export function LiveFleetMap({
     return { label: "SAFE — No action required", color: "var(--nominal)", hi };
   })();
 
-  // Admin live stats
+  // Admin live stats — before early return
   const stats = useMemo(() => {
     const total = fleet.length;
     const breach = fleet.filter((f) => f.risk === "breach").length;
     const watch = fleet.filter((f) => f.risk === "elevated").length;
     return { total, breach, watch };
   }, [fleet]);
+
+  if (routesCall.loading || auditCall.loading) {
+    return (
+      <div className="rounded-none border border-[var(--line-strong)] bg-[#171715] p-6">
+        <p className="eyebrow">Loading live route</p>
+      </div>
+    );
+  }
 
   return (
     <div className="space-y-4">
