@@ -126,6 +126,13 @@ export function inviteDriver(token: string | null, driverId: string, email: stri
   );
 }
 
+export function updateDriver(token: string | null, driverId: string, body: { name: string | null }) {
+  return request<ApiDriver>(`/api/drivers/${encodeURIComponent(driverId)}`, token, {
+    method: "PATCH",
+    body: JSON.stringify(body),
+  });
+}
+
 /** LocalFilePdfStore returns a relative /pdfs/... URL — apps/api serves it, not this app. */
 export function resolvePdfUrl(exportedPdfUrl: string | null | undefined): string | null {
   if (!exportedPdfUrl) return null;

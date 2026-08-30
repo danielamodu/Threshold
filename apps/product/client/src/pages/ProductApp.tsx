@@ -13,7 +13,7 @@ import { ArrowRight, ArrowUpRight, ClipboardCheck, FileClock, FilePlus2, FileWar
 import { useParams } from "wouter";
 import { ProductShell, useProductRoute } from "@/components/ProductShell";
 import { useApiCall } from "@/hooks/useApiCall";
-import { createDriver, createRoute, getRoute, inviteDriver, linkDriver, listAudit, listDrivers, listRoutes, resolvePdfUrl, type ApiDriver, type ApiRoute } from "@/lib/api";
+import { createDriver, createRoute, getRoute, inviteDriver, linkDriver, listAudit, listDrivers, listRoutes, resolvePdfUrl, type ApiDriver, type ApiRoute, updateDriver } from "@/lib/api";
 import { claimEpisodes, groupAuditByEvent, type GroupedDecision } from "@/lib/auditGrouping";
 import type { RouteStatus } from "@/lib/productShellData";
 import type { CargoClass } from "@threshold/types";
@@ -250,13 +250,34 @@ function DriversPage() {
 
   const drivers = data?.drivers ?? [];
 
+  const [editName, setEditName] = useState("");
+  const [nameSaving, setNameSaving] = useState(false);
+  const [nameError, setNameError] = useState<string | null>(null);
+
   function open(driver: ApiDriver) {
     setSelected(driver);
     setClerkUserId(driver.clerk_user_id ?? "");
+    setEditName(driver.name ?? "");
     setSaveError(null);
+    setNameError(null);
     setInviteEmail("");
     setInviteStatus("idle");
     setInviteError(null);
+  }
+
+  async function saveName() {
+    if (!selected) return;
+    setNameSaving(true);
+    setNameError(null);
+    try {
+      const updated = await updateDriver(await getToken(), selected.driver_id, { name: editName.trim() || null });
+      setSelected(updated);
+      reload();
+    } catch (err) {
+      setNameError(err instanceof Error ? err.message : String(err));
+    } finally {
+      setNameSaving(false);
+    }
   }
 
   async function submitCreate(event: React.FormEvent<HTMLFormElement>) {
@@ -312,8 +333,22 @@ function DriversPage() {
       {!loading && !error && drivers.length === 0 && <p className="eyebrow">No drivers yet in this organisation.</p>}
       {drivers.length > 0 && <div className="artifact-register"><div className="artifact-register__head"><span>Driver</span><span>Name</span><span>Linked Clerk user</span><span>State</span><span /></div>{drivers.map((d) => <article className="artifact-row" key={d.id}><span><UserCheck size={16} /><strong>{d.driver_id}</strong></span><span>{d.name ?? "—"}</span><span>{d.clerk_user_id ?? "—"}</span><span className={d.clerk_user_id ? "artifact-state" : "artifact-state artifact-state--watch"}>{d.clerk_user_id ? "Linked" : "Not linked"}</span>{d.clerk_user_id ? <button onClick={() => open(d)}><Link2 size={15} /> Change</button> : <button onClick={() => open(d)}><Mail size={15} /> Invite</button>}</article>)}</div>}
 
-      {selected && <aside className="artifact-drawer"><div className="artifact-drawer__head"><div><h2>{selected.driver_id}</h2></div><button onClick={() => setSelected(null)}>Close</button></div><div className="artifact-drawer__body">
-        <div><span>Name</span><strong>{selected.name ?? "—"}</strong></div>
+      {selected && (
+        <>
+          <div
+            aria-hidden
+            onClick={() => setSelected(null)}
+            style={{ position: 'fixed', inset: 0, background: 'rgba(0,0,0,0.42)', zIndex: 40 }}
+          />
+          <aside className="artifact-drawer" style={{ zIndex: 41 }}><div className="artifact-drawer__head"><div><h2>{selected.driver_id}</h2></div><button onClick={() => setSelected(null)}>Close</button></div><div className="artifact-drawer__body">
+        <div style={{ display: 'grid', gap: '6px', marginBottom: '14px' }}>
+          <span style={{ fontSize: 9, letterSpacing: '.08em', textTransform: 'uppercase', color: 'var(--muted-foreground)' }}>Name</span>
+          <div style={{ display: 'flex', gap: '8px' }}>
+            <input value={editName} onChange={(e) => setEditName(e.target.value)} placeholder="Driver name" style={{ flex: 1, height: '38px', padding: '0 12px', border: '1px solid var(--line-strong)', background: '#0f0f0e', color: 'var(--paper)', fontSize: '13px', outline: 'none' }} />
+            <button type="button" className="product-button" style={{ whiteSpace: 'nowrap' }} disabled={nameSaving || (editName.trim() || null) === (selected.name ?? null)} onClick={() => void saveName()}>{nameSaving ? 'Saving…' : 'Save'}</button>
+          </div>
+          {nameError && <p className="form-error" style={{ marginTop: '6px' }}>{nameError}</p>}
+        </div>
         <div><span>Currently linked</span><strong>{selected.clerk_user_id ?? "nobody"}</strong></div>
         {!selected.clerk_user_id && <div style={{ border: '1px solid var(--line-strong)', padding: '14px', margin: '14px 0', background: 'rgba(255,255,255,0.02)' }}>
           <h3 style={{ fontSize: 12, fontWeight: 600, margin: '0 0 6px', color: 'var(--paper)' }}>Invite driver</h3>
@@ -328,7 +363,8 @@ function DriversPage() {
         <button className="product-button" disabled={saving || clerkUserId.trim().length === 0} onClick={() => void save(clerkUserId.trim())}><Link2 size={15} /> {saving ? "Saving…" : "Link this user"}</button>
         {selected.clerk_user_id && <button className="product-button product-button--quiet" disabled={saving} onClick={() => void save(null)}><Link2Off size={15} /> Unlink</button>}
         {saveError && <p className="form-error">{saveError}</p>}
-      </div></aside>}
+      </div></aside></>
+      )}
 
       <div className="product-section-head"><div><h2>Add a driver</h2></div></div>
       <form className="route-create-form" onSubmit={submitCreate}>

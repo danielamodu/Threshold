@@ -135,6 +135,22 @@ export class DriverStore {
     return rows.map(hydrate);
   }
 
+  async updateName(update: {
+    org_id: string;
+    driver_id: string;
+    name: string | null;
+  }): Promise<Driver | undefined> {
+    const client = await this.conn.get();
+    const { rows } = await client.query<Driver>(
+      `update public.drivers set name = $3
+       where org_id = $1 and driver_id = $2
+       returning ${COLUMNS}`,
+      [update.org_id, update.driver_id, update.name],
+    );
+    const row = rows[0];
+    return row ? hydrate(row) : undefined;
+  }
+
   async close(): Promise<void> {
     await this.conn.close();
   }

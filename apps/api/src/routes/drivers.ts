@@ -338,4 +338,26 @@ export function registerDriverRoutes(
       }
     },
   );
+
+  app.patch<{ Params: { driver_id: string }; Body: { name?: string | null } }>(
+    '/api/drivers/:driver_id',
+    { preHandler: [authenticate, ensureOrg.preHandler, requireOrgManagement('write')] },
+    async (request, reply) => {
+      const orgId = requireOrg(request, reply);
+      if (!orgId) return;
+      const raw = request.body?.name;
+      // Allow null/empty to clear the name; otherwise trim and keep
+      const name = raw === null || raw === undefined ? null : String(raw).trim() || null;
+      if (name !== null && name.length > 80) {
+        reply.code(400).send({ error: 'Name must be 80 characters or fewer.' });
+        return;
+      }
+      const driver = await store.updateName({ org_id: orgId, driver_id: request.params.driver_id, name });
+      if (!driver) {
+        reply.code(404).send({ error: 'Driver not found in your organization.' });
+        return;
+      }
+      return driver;
+    },
+  );
 }
