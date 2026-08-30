@@ -318,9 +318,9 @@ function DriversPage() {
         {!selected.clerk_user_id && <div style={{ border: '1px solid var(--line)', padding: '12px', margin: '12px 0' }}>
           <h3 style={{ fontSize: 12, fontWeight: 600, margin: '0 0 6px' }}>Invite driver</h3>
           <p style={{ fontSize: 11, color: 'var(--muted-foreground)', margin: '0 0 10px', lineHeight: 1.4 }}>Enter the driver's email — they'll receive an invitation as a driver and be auto-linked to <strong>{selected.driver_id}</strong> when they accept. No ID to copy.</p>
-          <label><span>Email</span><input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="driver@company.com" type="email" /></label>
-          <button className="product-button" style={{ marginTop: 8 }} disabled={inviteStatus === "saving" || inviteEmail.trim().length === 0} onClick={() => void sendInvite()}><Mail size={15} /> {inviteStatus === "saving" ? "Inviting…" : "Send invite"}</button>
-          {inviteStatus === "done" && <p className="form-confirmation"><ShieldCheck size={15} /> Invitation sent to {inviteEmail || "driver"} — they'll be linked automatically when they accept.</p>}
+          <label><span>Email</span><input value={inviteEmail} onChange={(e) => setInviteEmail(e.target.value)} placeholder="driver@company.com" type="email" autoComplete="email" /></label>
+          <button type="button" className="product-button" style={{ marginTop: 8 }} disabled={inviteStatus === "saving"} onClick={() => void sendInvite()}><Mail size={15} /> {inviteStatus === "saving" ? "Inviting…" : "Send invite"}</button>
+          {inviteStatus === "done" && <p className="form-confirmation"><ShieldCheck size={15} /> Invitation sent — they'll be linked automatically when they accept.</p>}
           {inviteError && <p className="form-error">{inviteError}</p>}
           <div style={{ margin: '12px 0', textAlign: 'center', fontSize: 10, color: 'var(--muted-foreground)', letterSpacing: '.08em', textTransform: 'uppercase' }}>Or link manually</div>
         </div>}
