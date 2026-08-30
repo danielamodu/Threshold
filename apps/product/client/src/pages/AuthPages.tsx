@@ -396,8 +396,8 @@ export function OrganizationEntryPage() {
           <p>Your role and workspace come from your real organisation membership — there's no local switch left to pick.</p>
         </div>
         <div className="org-entry__choices">
-          {!listLoaded && !slow && <p><KeyRound size={14} /> {inviteDriver ? `Setting up your driver workspace for ${inviteDriver}…` : 'Loading your memberships…'}</p>}
-          {!listLoaded && slow && <p>{inviteDriver ? `Still setting up ${inviteDriver} — this is taking longer than usual. ` : 'Still loading your memberships — this is taking longer than usual. '}Check your connection or <a href="" onClick={(e) => { e.preventDefault(); window.location.reload(); }} style={{ color: 'var(--driver)', textDecoration: 'underline' }}>retry</a>, or <a href="/sign-in" style={{ color: 'var(--driver)', textDecoration: 'underline' }}>switch account</a>.</p>}
+          {!listLoaded && !slow && <p><KeyRound size={14} /> {inviteDriver ? `Setting up your driver workspace for ${inviteDriver}…` : 'Checking your workspace…'}</p>}
+          {!listLoaded && slow && <p>{inviteDriver ? `Still setting up ${inviteDriver} — this is taking longer than usual. ` : 'Still checking your workspace — this is taking longer than usual. '}Check your connection or <a href="" onClick={(e) => { e.preventDefault(); window.location.reload(); }} style={{ color: 'var(--driver)', textDecoration: 'underline' }}>retry</a>, or <a href="/sign-in" style={{ color: 'var(--driver)', textDecoration: 'underline' }}>switch account</a>.</p>}
           {listLoaded && userMemberships.count === 0 && <p>You don't belong to an organisation yet. Ask an admin to invite you, or check the email you signed up with for a pending invitation.</p>}
           {listLoaded && userMemberships.data.map((membership) => (
             <button
