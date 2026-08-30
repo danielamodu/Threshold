@@ -361,9 +361,7 @@ export function SSOCallbackPage() {
 export function OrganizationEntryPage() {
   const [, setLocation] = useLocation();
   const { isLoaded: authLoaded, orgId } = useAuth();
-  const { isLoaded: listLoaded, userMemberships, setActive } = useOrganizationList({
-    userMemberships: { infinite: true },
-  });
+  const { isLoaded: listLoaded, userMemberships, setActive } = useOrganizationList();
 
   useEffect(() => {
     if (!authLoaded) return;
