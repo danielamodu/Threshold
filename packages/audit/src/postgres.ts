@@ -19,6 +19,35 @@ import { assertLoggable, type AuditSink } from './sink.js';
 const needsSsl = (url: string): boolean =>
   /sslmode=require/i.test(url) || /\.neon\.tech/i.test(url);
 
+/**
+ * Transaction-local tenant isolation for Neon + PgBouncer (transaction mode).
+ * See packages/accounts/src/db.ts and the Phase 11 migration header for the
+ * full verification. SET LOCAL ROLE + SET LOCAL GUC are pooler-safe; session
+ * SET is not (verified live: a session SET leaked across Clients sharing a
+ * backend PID). Every org-scoped audit operation wraps through this.
+ */
+async function withTenantContext<T>(
+  client: Client,
+  orgId: string,
+  fn: (client: Client) => Promise<T>,
+): Promise<T> {
+  await client.query('begin');
+  try {
+    await client.query('set local role threshold_app');
+    await client.query('select set_config($1, $2, true)', ['app.current_org_id', orgId]);
+    const result = await fn(client);
+    await client.query('commit');
+    return result;
+  } catch (error) {
+    try {
+      await client.query('rollback');
+    } catch {
+      // secondary
+    }
+    throw error;
+  }
+}
+
 interface PostgresAuditSinkOptions {
   /** Required, explicitly. Never defaulted from the environment — see above. */
   connectionString: string;
@@ -54,41 +83,49 @@ export class PostgresAuditSink implements AuditSink {
     assertLoggable(entry);
     const client = await this.connected();
 
-    const { rows } = await client.query<{
-      seq: string;
-      entry_id: string;
-      recorded_at: Date;
-    }>(
-      `insert into public.audit_log
-         (entry_type, event_id, route_id, org_id, payload, rationale, occurred_at)
-       values ($1, $2, $3, $4, $5::jsonb, $6, $7)
-       returning seq::text, entry_id, recorded_at`,
-      [
-        entry.entry_type,
-        entry.event_id,
-        entry.route_id ?? null,
-        entry.org_id,
-        JSON.stringify(entry.payload),
-        entry.rationale ?? null,
-        entry.occurred_at ?? null,
-      ],
-    );
+    return withTenantContext(client, entry.org_id, async (tx) => {
+      const { rows } = await tx.query<{
+        seq: string;
+        entry_id: string;
+        recorded_at: Date;
+      }>(
+        `insert into public.audit_log
+           (entry_type, event_id, route_id, org_id, payload, rationale, occurred_at)
+         values ($1, $2, $3, $4, $5::jsonb, $6, $7)
+         returning seq::text, entry_id, recorded_at`,
+        [
+          entry.entry_type,
+          entry.event_id,
+          entry.route_id ?? null,
+          entry.org_id,
+          JSON.stringify(entry.payload),
+          entry.rationale ?? null,
+          entry.occurred_at ?? null,
+        ],
+      );
 
-    const row = rows[0];
-    if (!row) throw new Error('audit_log insert returned no row');
+      const row = rows[0];
+      if (!row) throw new Error('audit_log insert returned no row');
 
-    return {
-      ...entry,
-      seq: Number(row.seq),
-      entry_id: row.entry_id,
-      route_id: entry.route_id ?? null,
-      rationale: entry.rationale ?? null,
-      occurred_at: entry.occurred_at ?? null,
-      recorded_at: row.recorded_at.toISOString(),
-    } as AuditLogEntry;
+      return {
+        ...entry,
+        seq: Number(row.seq),
+        entry_id: row.entry_id,
+        route_id: entry.route_id ?? null,
+        rationale: entry.rationale ?? null,
+        occurred_at: entry.occurred_at ?? null,
+        recorded_at: row.recorded_at.toISOString(),
+      } as AuditLogEntry;
+    });
   }
 
   async read(): Promise<AuditLogEntry[]> {
+    // Operator/maintenance path — intentionally bypasses RLS (runs as
+    // neondb_owner with BYPASSRLS) so scripts like verify-org-scoped.ts can
+    // inspect all tenants. Tenant-facing reads MUST use readForOrg, which
+    // enforces RLS via withTenantContext below. Keeping read() as bypass is
+    // what lets Phase 7's permanent demo rows remain inspectable without
+    // fabricating a tenant context.
     const client = await this.connected();
     const { rows } = await client.query<{
       seq: string;
@@ -134,44 +171,46 @@ export class PostgresAuditSink implements AuditSink {
    */
   async readForOrg(orgId: string, options: { driverId?: string } = {}): Promise<AuditLogEntry[]> {
     const client = await this.connected();
-    const { rows } = await client.query<{
-      seq: string;
-      entry_id: string;
-      entry_type: AuditLogInsert['entry_type'];
-      event_id: string;
-      route_id: string | null;
-      org_id: string;
-      payload: unknown;
-      rationale: string | null;
-      occurred_at: Date | null;
-      recorded_at: Date;
-    }>(
-      `select seq::text, entry_id, entry_type, event_id, route_id, org_id, payload,
-              rationale, occurred_at, recorded_at
-       from public.audit_log
-       where org_id = $1
-         and ($2::text is null or route_id in (
-           select route_id from public.routes where org_id = $1 and driver_id = $2
-         ))
-       order by seq`,
-      [orgId, options.driverId ?? null],
-    );
+    return withTenantContext(client, orgId, async (tx) => {
+      const { rows } = await tx.query<{
+        seq: string;
+        entry_id: string;
+        entry_type: AuditLogInsert['entry_type'];
+        event_id: string;
+        route_id: string | null;
+        org_id: string;
+        payload: unknown;
+        rationale: string | null;
+        occurred_at: Date | null;
+        recorded_at: Date;
+      }>(
+        `select seq::text, entry_id, entry_type, event_id, route_id, org_id, payload,
+                rationale, occurred_at, recorded_at
+         from public.audit_log
+         where org_id = $1
+           and ($2::text is null or route_id in (
+             select route_id from public.routes where org_id = $1 and driver_id = $2
+           ))
+         order by seq`,
+        [orgId, options.driverId ?? null],
+      );
 
-    return rows.map(
-      (r) =>
-        ({
-          seq: Number(r.seq),
-          entry_id: r.entry_id,
-          entry_type: r.entry_type,
-          event_id: r.event_id,
-          route_id: r.route_id,
-          org_id: r.org_id,
-          payload: r.payload,
-          rationale: r.rationale,
-          occurred_at: r.occurred_at ? r.occurred_at.toISOString() : null,
-          recorded_at: r.recorded_at.toISOString(),
-        }) as AuditLogEntry,
-    );
+      return rows.map(
+        (r) =>
+          ({
+            seq: Number(r.seq),
+            entry_id: r.entry_id,
+            entry_type: r.entry_type,
+            event_id: r.event_id,
+            route_id: r.route_id,
+            org_id: r.org_id,
+            payload: r.payload,
+            rationale: r.rationale,
+            occurred_at: r.occurred_at ? r.occurred_at.toISOString() : null,
+            recorded_at: r.recorded_at.toISOString(),
+          }) as AuditLogEntry,
+      );
+    });
   }
 
   async close(): Promise<void> {

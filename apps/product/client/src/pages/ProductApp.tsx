@@ -162,7 +162,7 @@ function RouteDetailPage({ role, routeId }: { role: "admin" | "dispatcher" | "dr
       <div className="product-section-head"><div><h2>Decision timeline</h2></div></div>
       {auditLoading && <LoadingRow />}
       {auditError && <ErrorRow message={auditError} />}
-      {!auditLoading && !auditError && timeline.length === 0 && <p className="eyebrow">No decisions recorded yet for this route.</p>}
+      {!auditLoading && !auditError && timeline.length === 0 && <p className="eyebrow">No thermal events recorded yet for this route</p>}
       {!auditLoading && timeline.length > 0 && <div className="audit-stack">{timeline.map((g) => <article className={`audit-card audit-card--${g.decision ? "aligned" : "split"}`} key={g.event_id}><div className="audit-card__stamp"><span className="eyebrow">{g.occurred_at ? new Date(g.occurred_at).toLocaleString() : "—"}</span><strong>{routeId}</strong><small>seq {g.seq}</small></div><div className="audit-card__responses"><div><span>Driver</span><strong>{g.compliance?.action ?? "—"}</strong></div><div><span>Cargo</span><strong>{g.cargo?.recommended_action ?? "—"}</strong></div></div>{g.decision && <div className="audit-card__decision"><span className={`decision-tier decision-tier--${g.decision.action_tier}`}>{g.decision.action_tier}</span><span className="agreement">{(g.decision.confidence * 100).toFixed(0)}% confidence</span></div>}{g.decision?.rationale && <p className="audit-card__rationale"><span>Reason</span>{g.decision.rationale}</p>}</article>)}</div>}
     </section>
   </ProductShell>;

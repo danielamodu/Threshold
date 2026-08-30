@@ -50,27 +50,29 @@ export class DriverStore {
     name?: string;
     clerk_user_id?: string;
   }): Promise<Driver> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<Driver>(
-      `insert into public.drivers (org_id, driver_id, name, clerk_user_id)
-       values ($1, $2, $3, $4)
-       returning ${COLUMNS}`,
-      [driver.org_id, driver.driver_id, driver.name ?? null, driver.clerk_user_id ?? null],
-    );
-    const row = rows[0];
-    if (!row) throw new Error('drivers insert returned no row');
-    return hydrate(row);
+    return this.conn.withTenant(driver.org_id, async (client) => {
+      const { rows } = await client.query<Driver>(
+        `insert into public.drivers (org_id, driver_id, name, clerk_user_id)
+         values ($1, $2, $3, $4)
+         returning ${COLUMNS}`,
+        [driver.org_id, driver.driver_id, driver.name ?? null, driver.clerk_user_id ?? null],
+      );
+      const row = rows[0];
+      if (!row) throw new Error('drivers insert returned no row');
+      return hydrate(row);
+    });
   }
 
   async get(org_id: string, driver_id: string): Promise<Driver | undefined> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<Driver>(
-      `select ${COLUMNS} from public.drivers
-       where org_id = $1 and driver_id = $2`,
-      [org_id, driver_id],
-    );
-    const row = rows[0];
-    return row ? hydrate(row) : undefined;
+    return this.conn.withTenant(org_id, async (client) => {
+      const { rows } = await client.query<Driver>(
+        `select ${COLUMNS} from public.drivers
+         where org_id = $1 and driver_id = $2`,
+        [org_id, driver_id],
+      );
+      const row = rows[0];
+      return row ? hydrate(row) : undefined;
+    });
   }
 
   /**
@@ -85,14 +87,15 @@ export class DriverStore {
    * no user id from matching every unlinked row.
    */
   async getByClerkUser(org_id: string, clerk_user_id: string): Promise<Driver | undefined> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<Driver>(
-      `select ${COLUMNS} from public.drivers
-       where org_id = $1 and clerk_user_id is not null and clerk_user_id = $2`,
-      [org_id, clerk_user_id],
-    );
-    const row = rows[0];
-    return row ? hydrate(row) : undefined;
+    return this.conn.withTenant(org_id, async (client) => {
+      const { rows } = await client.query<Driver>(
+        `select ${COLUMNS} from public.drivers
+         where org_id = $1 and clerk_user_id is not null and clerk_user_id = $2`,
+        [org_id, clerk_user_id],
+      );
+      const row = rows[0];
+      return row ? hydrate(row) : undefined;
+    });
   }
 
   /**
@@ -114,25 +117,27 @@ export class DriverStore {
     driver_id: string;
     clerk_user_id: string | null;
   }): Promise<Driver | undefined> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<Driver>(
-      `update public.drivers set clerk_user_id = $3
-       where org_id = $1 and driver_id = $2
-       returning ${COLUMNS}`,
-      [link.org_id, link.driver_id, link.clerk_user_id],
-    );
-    const row = rows[0];
-    return row ? hydrate(row) : undefined;
+    return this.conn.withTenant(link.org_id, async (client) => {
+      const { rows } = await client.query<Driver>(
+        `update public.drivers set clerk_user_id = $3
+         where org_id = $1 and driver_id = $2
+         returning ${COLUMNS}`,
+        [link.org_id, link.driver_id, link.clerk_user_id],
+      );
+      const row = rows[0];
+      return row ? hydrate(row) : undefined;
+    });
   }
 
   async listForOrg(org_id: string): Promise<Driver[]> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<Driver>(
-      `select ${COLUMNS} from public.drivers
-       where org_id = $1 order by created_at`,
-      [org_id],
-    );
-    return rows.map(hydrate);
+    return this.conn.withTenant(org_id, async (client) => {
+      const { rows } = await client.query<Driver>(
+        `select ${COLUMNS} from public.drivers
+         where org_id = $1 order by created_at`,
+        [org_id],
+      );
+      return rows.map(hydrate);
+    });
   }
 
   async updateName(update: {
@@ -140,15 +145,16 @@ export class DriverStore {
     driver_id: string;
     name: string | null;
   }): Promise<Driver | undefined> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<Driver>(
-      `update public.drivers set name = $3
-       where org_id = $1 and driver_id = $2
-       returning ${COLUMNS}`,
-      [update.org_id, update.driver_id, update.name],
-    );
-    const row = rows[0];
-    return row ? hydrate(row) : undefined;
+    return this.conn.withTenant(update.org_id, async (client) => {
+      const { rows } = await client.query<Driver>(
+        `update public.drivers set name = $3
+         where org_id = $1 and driver_id = $2
+         returning ${COLUMNS}`,
+        [update.org_id, update.driver_id, update.name],
+      );
+      const row = rows[0];
+      return row ? hydrate(row) : undefined;
+    });
   }
 
   async close(): Promise<void> {

@@ -313,11 +313,12 @@ export function LiveFleetMap({
               );
             })}
 
-            {/* Fleet / driver trucks */}
+            {/* Fleet / driver trucks — colored by current waypoint's risk, not static final */}
             {visibleFleet.map((fr) => {
               const isSelected = selected?.route.route_id === fr.route.route_id;
               const activeG = fr.timeline[playback.activeIdx] ?? fr.latest;
               const temp = activeG?.thermal?.temp_c;
+              const activeRisk = activeG?.cargo?.risk_level ?? fr.risk;
               const t = fr.timeline.length > 1 ? playback.activeIdx / (fr.timeline.length - 1) : 0;
               const segs = points.length - 1;
               const segIdx = Math.floor(t * segs);
@@ -326,7 +327,7 @@ export function LiveFleetMap({
               const b = points[Math.min(segIdx + 1, points.length - 1)]!;
               const x = a.x + (b.x - a.x) * segT;
               const y = a.y + (b.y - a.y) * segT;
-              const col = RISK_COLOR[fr.risk] ?? RISK_COLOR.nominal;
+              const col = RISK_COLOR[activeRisk] ?? RISK_COLOR.nominal;
               return (
                 <g
                   key={fr.route.route_id}
@@ -429,6 +430,7 @@ export function LiveFleetMap({
                   </button>
                 </div>
                 <p className="eyebrow">Decision timeline — real FortyGuard timestamps</p>
+                {fr.timeline.length === 0 && <p className="eyebrow mt-3">No thermal events recorded yet for this route</p>}
                 <div className="mt-3 space-y-3">
                   {fr.timeline.map((g) => (
                     <div key={g.event_id} className="border border-[var(--line)] bg-[#1a1917] p-3">
@@ -538,7 +540,7 @@ export function LiveFleetMap({
                 className="border border-[var(--line-strong)] bg-[#111110] px-2 py-1.5 font-mono text-[11px] text-[var(--paper)]"
               />
               <button onClick={() => void loadForecast()} className="border border-[var(--paper)] bg-[var(--paper)] px-3 py-1.5 font-mono text-[10px] font-bold text-[#1a1815]">
-                {forecastLoading ? "Scoring…" : "Score"}
+                {forecastLoading ? "Checking…" : "Check risk"}
               </button>
             </div>
           </div>

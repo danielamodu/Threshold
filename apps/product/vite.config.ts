@@ -32,5 +32,15 @@ export default defineConfig({
     port: 3100,
     strictPort: false,
     host: true,
+    proxy: {
+      "/api": {
+        target: process.env.VITE_API_BASE_URL || "http://localhost:8080",
+        changeOrigin: true,
+      },
+      "/pdfs": {
+        target: process.env.VITE_API_BASE_URL || "http://localhost:8080",
+        changeOrigin: true,
+      },
+    },
   },
 });

@@ -44,26 +44,28 @@ export class RouteStore {
     cargo_class: CargoClass;
     driver_id: string;
   }): Promise<Route> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<Route>(
-      `insert into public.routes (org_id, route_id, cargo_class, driver_id)
-       values ($1, $2, $3, $4)
-       returning id, org_id, route_id, cargo_class, driver_id, created_at`,
-      [route.org_id, route.route_id, route.cargo_class, route.driver_id],
-    );
-    const row = rows[0];
-    if (!row) throw new Error('routes insert returned no row');
-    return { ...row, created_at: new Date(row.created_at).toISOString() };
+    return this.conn.withTenant(route.org_id, async (client) => {
+      const { rows } = await client.query<Route>(
+        `insert into public.routes (org_id, route_id, cargo_class, driver_id)
+         values ($1, $2, $3, $4)
+         returning id, org_id, route_id, cargo_class, driver_id, created_at`,
+        [route.org_id, route.route_id, route.cargo_class, route.driver_id],
+      );
+      const row = rows[0];
+      if (!row) throw new Error('routes insert returned no row');
+      return { ...row, created_at: new Date(row.created_at).toISOString() };
+    });
   }
 
   async listForOrg(org_id: string): Promise<Route[]> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<Route>(
-      `select id, org_id, route_id, cargo_class, driver_id, created_at
-       from public.routes where org_id = $1 order by created_at`,
-      [org_id],
-    );
-    return rows.map((r) => ({ ...r, created_at: new Date(r.created_at).toISOString() }));
+    return this.conn.withTenant(org_id, async (client) => {
+      const { rows } = await client.query<Route>(
+        `select id, org_id, route_id, cargo_class, driver_id, created_at
+         from public.routes where org_id = $1 order by created_at`,
+        [org_id],
+      );
+      return rows.map((r) => ({ ...r, created_at: new Date(r.created_at).toISOString() }));
+    });
   }
 
   async close(): Promise<void> {
@@ -91,23 +93,24 @@ export class PostgresRouteRegistry implements RouteContextProvider {
 
   /** Loads every route for this org once. Call and await before running a pipeline. */
   async load(): Promise<this> {
-    const client = await this.conn.get();
-    const { rows } = await client.query<{
-      route_id: string;
-      driver_id: string;
-      cargo_class: CargoClass;
-    }>(
-      `select route_id, driver_id, cargo_class from public.routes where org_id = $1`,
-      [this.org_id],
-    );
-    this.cache.clear();
-    for (const r of rows) {
-      this.cache.set(r.route_id, {
-        route_id: r.route_id,
-        driver_id: r.driver_id,
-        cargo_class: r.cargo_class,
-      });
-    }
+    await this.conn.withTenant(this.org_id, async (client) => {
+      const { rows } = await client.query<{
+        route_id: string;
+        driver_id: string;
+        cargo_class: CargoClass;
+      }>(
+        `select route_id, driver_id, cargo_class from public.routes where org_id = $1`,
+        [this.org_id],
+      );
+      this.cache.clear();
+      for (const r of rows) {
+        this.cache.set(r.route_id, {
+          route_id: r.route_id,
+          driver_id: r.driver_id,
+          cargo_class: r.cargo_class,
+        });
+      }
+    });
     this.loaded = true;
     return this;
   }
