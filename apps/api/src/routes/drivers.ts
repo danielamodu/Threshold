@@ -318,6 +318,7 @@ export function registerDriverRoutes(
           // Also set privateMetadata as fallback — webhook checks both
           privateMetadata: { driver_id: driver.driver_id },
           inviterUserId: request.auth?.userId,
+          redirectUrl: 'https://trythreshold.vercel.app',
         });
         reply.code(201).send({
           invitation_id: invitation.id,
